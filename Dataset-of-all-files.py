@@ -39,7 +39,7 @@ for file in os.listdir(folder):
             if not key.startswith("__"):
                 dataset[subject][condition][key] = value
 
-print(dataset[1][1]["e"])
+
 """
 Example usage:
 
