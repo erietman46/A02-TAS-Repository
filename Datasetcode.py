@@ -39,6 +39,8 @@ for file in os.listdir(folder):
             if not key.startswith("__"):
                 dataset[subject][condition][key] = value
 
+
+
 '''
 TIME HISTORIES 
 • the error signal               e [deg]   8192x5 

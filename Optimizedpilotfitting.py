@@ -23,11 +23,6 @@ Km = 1          #
 tau_m = 1       #
 
 
-
-
-
-
-
 #Neuromuscular model
 def Hnm_model(w, omega_nm, zeta_nm):
     s = 1j * w
@@ -62,12 +57,12 @@ def Hpxd_model(w, Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm, zeta_nm):
 
 
 # cost functions
-def cost_function(cf_vis_data, cf_vis_model, cf_vest_data, cf_vest_model, weight_vis=1, weight_vest=1):
-    cost = 0
+#def cost_function(cf_vis_data, cf_vis_model, cf_vest_data, cf_vest_model, weight_vis=1, weight_vest=1):
+ #   cost = 0
     #Make sure that, when the models are called, the frequency matches the data
-    for i in range(len(cf_vis_data)):
-        cost += weight_vis*((cf_vis_data[i]-cf_vis_model)**2)/(cf_vis_data[i]**2) + weight_vest*((cf_vest_data[i]-cf_vest_model)**2)/(cf_vest_data[i]**2)
-    return cost
+  #  for i in range(len(cf_vis_data)):
+   #     cost += weight_vis*((cf_vis_data[i]-cf_vis_model)**2)/(cf_vis_data[i]**2) + weight_vest*((cf_vest_data[i]-cf_vest_model)**2)/(cf_vest_data[i]**2)
+   # return cost
 
 def cost_function(w, cf_vis_data, cf_vs_data, vis_params, vest_params, weight_vis=1, weight_vest=1):
     """
