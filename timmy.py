@@ -1,7 +1,7 @@
 #fuck you yoshua
 #no :(
-#import scipy.io as sc
-#import matplotlib.pyplot as plt 
+import scipy.io as sc
+import matplotlib.pyplot as plt 
 
 
 data = sc.loadmat("ae2224I_measurement_data_subj1_C1.mat")
