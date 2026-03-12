@@ -2,7 +2,7 @@
 LSTM-based time-series classifier for motion-on vs motion-off behavior.
 
 Pipeline implemented:
-1. Load run-level data from Python files.
+1. Load run-level data from AE2224-I .npz files.
 2. Normalize each run separately.
 3. Build labeled short windows from each run.
 4. Train an LSTM classifier per vehicle type.
@@ -10,22 +10,26 @@ Pipeline implemented:
 6. Evaluate with accuracy and confusion matrix.
 7. Compare confidence scores statistically at run level.
 
-Expected run format in imported Python files:
-    {
-        "e": np.ndarray,
-        "u": np.ndarray,
-        "label": 0 or 1,
-        "vehicle_type": "...",
-        "pilot_id": "...",
-        "repetition_id": "...",
-        "time": np.ndarray (optional),
-        "fs": float (optional),
-    }
+Expected filename convention:
+- ae2224I_measurement_data_subj6_C3.npz
+- Subjects: subj1 ... subj6
+- Conditions: C1 ... C6
 
-Supported export conventions in each Python data file:
-- RUNS = [run_dict_1, run_dict_2, ...]
-- DATA = [run_dict_1, run_dict_2, ...]
-- def get_runs() -> list[dict]
+Expected content per .npz file:
+- e: required, tracking/error signal
+- u: required, control input signal
+- label: required unless provided through a manual condition-to-label mapping
+- vehicle_type: optional, defaults to "all_vehicles" if absent
+- time: optional
+- fs: optional
+
+Accepted aliases in .npz files:
+- e, error
+- u, control
+- label, motion_label, motion_on, class_label, y
+- vehicle_type, vehicle, simulator, aircraft
+- time, t
+- fs, sample_rate, sampling_rate
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ import copy
 import importlib.util
 import os
 from collections import defaultdict
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
@@ -110,6 +115,88 @@ def normalize_run_signals(run: Dict) -> Dict:
     return run
 
 
+AE2224I_FILENAME_RE = re.compile(
+    r"^ae2224I_measurement_data_subj(?P<subject>[1-6])_C(?P<condition>[1-6])\.npz$",
+    re.IGNORECASE,
+)
+
+
+def parse_ae2224i_filename(file_path: Path) -> Tuple[str, str]:
+    match = AE2224I_FILENAME_RE.match(file_path.name)
+    if match is None:
+        raise ValueError(
+            f"Filename does not match expected pattern ae2224I_measurement_data_subjX_CY.npz: {file_path.name}"
+        )
+    subject_id = f"subj{match.group('subject')}"
+    condition_id = f"C{match.group('condition')}"
+    return subject_id, condition_id
+
+
+def _extract_first_available(npz_data: np.lib.npyio.NpzFile, candidates: Sequence[str], required: bool = True):
+    available = {k.lower(): k for k in npz_data.files}
+    for key in candidates:
+        source_key = available.get(key.lower())
+        if source_key is not None:
+            return npz_data[source_key]
+    if required:
+        raise KeyError(f"Missing required key. Tried: {candidates}. Available keys: {npz_data.files}")
+    return None
+
+
+def _scalar_from_array(value, default=None):
+    if value is None:
+        return default
+    arr = np.asarray(value)
+    if arr.size == 0:
+        return default
+    scalar = arr.reshape(-1)[0]
+    if isinstance(scalar, bytes):
+        scalar = scalar.decode('utf-8')
+    return scalar.item() if hasattr(scalar, 'item') else scalar
+
+
+def load_single_npz_run(npz_file: Path, min_run_length: int = 1) -> Dict | None:
+    subject_id, condition_id = parse_ae2224i_filename(npz_file)
+
+    with np.load(npz_file, allow_pickle=True) as data:
+        e = np.asarray(_extract_first_available(data, ('e', 'error')), dtype=np.float32).squeeze()
+        u = np.asarray(_extract_first_available(data, ('u', 'control')), dtype=np.float32).squeeze()
+        label_raw = _extract_first_available(data, ('label', 'motion_label', 'motion_on', 'class_label', 'y'))
+        vehicle_raw = _extract_first_available(data, ('vehicle_type', 'vehicle', 'simulator', 'aircraft'), required=False)
+        time_raw = _extract_first_available(data, ('time', 't'), required=False)
+        fs_raw = _extract_first_available(data, ('fs', 'sample_rate', 'sampling_rate'), required=False)
+
+    if e.ndim != 1 or u.ndim != 1:
+        raise ValueError(f"Signals e and u must be 1D arrays in {npz_file.name}.")
+
+    n = min(len(e), len(u))
+    if n < min_run_length:
+        return None
+
+    label_scalar = int(_scalar_from_array(label_raw))
+    vehicle_type = str(_scalar_from_array(vehicle_raw, default='all_vehicles'))
+
+    cleaned = {
+        'e': e[:n],
+        'u': u[:n],
+        'label': label_scalar,
+        'vehicle_type': vehicle_type,
+        'pilot_id': subject_id,
+        'repetition_id': condition_id,
+        'source_file': npz_file.name,
+        'run_id': npz_file.stem,
+    }
+
+    if time_raw is not None:
+        time_arr = np.asarray(time_raw, dtype=np.float32).squeeze()
+        if time_arr.ndim == 1 and len(time_arr) >= n:
+            cleaned['time'] = time_arr[:n]
+    if fs_raw is not None:
+        cleaned['fs'] = float(_scalar_from_array(fs_raw))
+
+    return normalize_run_signals(cleaned)
+
+
 def extract_runs_from_module(module) -> List[Dict]:
     if hasattr(module, "get_runs") and callable(module.get_runs):
         runs = module.get_runs()
@@ -135,52 +222,40 @@ def import_python_module(py_file: Path):
     return module
 
 
-def load_runs_from_python_dir(data_dir: str, min_run_length: int = 1) -> List[Dict]:
+def load_runs_from_npz_dir(data_dir: str, min_run_length: int = 1) -> List[Dict]:
     data_path = Path(data_dir)
     if not data_path.exists():
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
-    py_files = [
-        p for p in data_path.glob("*.py")
-        if p.name != Path(__file__).name and not p.name.startswith("__")
+    npz_files = [
+        p for p in sorted(data_path.glob('*.npz'))
+        if AE2224I_FILENAME_RE.match(p.name)
     ]
-    if not py_files:
-        raise FileNotFoundError(f"No Python data files found in: {data_dir}")
+    if not npz_files:
+        raise FileNotFoundError(
+            f"No .npz files found in {data_dir} matching ae2224I_measurement_data_subjX_CY.npz"
+        )
 
     all_runs = []
-    for py_file in sorted(py_files):
-        module = import_python_module(py_file)
-        runs = extract_runs_from_module(module)
+    for npz_file in npz_files:
+        run = load_single_npz_run(npz_file, min_run_length=min_run_length)
+        if run is not None:
+            all_runs.append(run)
 
-        for idx, run in enumerate(runs):
-            required = {"e", "u", "label", "vehicle_type", "pilot_id", "repetition_id"}
-            missing = required - set(run.keys())
-            if missing:
-                raise KeyError(f"{py_file.name}, run {idx}: missing keys {missing}")
-
-            n = min(len(run["e"]), len(run["u"]))
-            if n < min_run_length:
-                continue
-
-            cleaned = {
-                "e": np.asarray(run["e"][:n], dtype=np.float32),
-                "u": np.asarray(run["u"][:n], dtype=np.float32),
-                "label": int(run["label"]),
-                "vehicle_type": str(run["vehicle_type"]),
-                "pilot_id": str(run["pilot_id"]),
-                "repetition_id": str(run["repetition_id"]),
-                "source_file": py_file.name,
-                "run_id": f"{py_file.stem}_run{idx}",
-            }
-            if "time" in run and run["time"] is not None:
-                cleaned["time"] = np.asarray(run["time"][:n], dtype=np.float32)
-            if "fs" in run and run["fs"] is not None:
-                cleaned["fs"] = float(run["fs"])
-
-            all_runs.append(normalize_run_signals(cleaned))
+    expected_names = {
+        f"ae2224I_measurement_data_subj{subj}_C{cond}.npz".lower()
+        for subj in range(1, 7)
+        for cond in range(1, 7)
+    }
+    found_names = {p.name.lower() for p in npz_files}
+    missing_names = sorted(expected_names - found_names)
+    if missing_names:
+        print('Warning: the following expected files were not found:')
+        for name in missing_names:
+            print(f'  - {name}')
 
     if not all_runs:
-        raise ValueError("No valid runs were loaded.")
+        raise ValueError('No valid runs were loaded from the matching .npz files.')
     return all_runs
 
 
@@ -567,7 +642,7 @@ def main(config: TrainConfig):
     set_seed(config.random_state)
     os.makedirs(config.save_dir, exist_ok=True)
 
-    runs = load_runs_from_python_dir(config.data_dir, min_run_length=config.min_run_length)
+    runs = load_runs_from_npz_dir(config.data_dir, min_run_length=config.min_run_length)
     runs_by_vehicle = defaultdict(list)
     for run in runs:
         runs_by_vehicle[run["vehicle_type"]].append(run)
@@ -594,7 +669,7 @@ def main(config: TrainConfig):
 
 if __name__ == "__main__":
     CONFIG = TrainConfig(
-        data_dir="data_py",   # change this to your folder with Python data files
+        data_dir="data_npz",  # folder with ae2224I_measurement_data_subjX_CY.npz files
         window_sizes=(32, 64, 96, 128),
         stride_fraction=0.5,
         input_combinations=(
