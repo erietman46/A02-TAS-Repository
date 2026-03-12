@@ -16,8 +16,8 @@ os.makedirs(output_folder, exist_ok=True)
 
 metadata_keys = {"__header__", "__version__", "__globals__"}
 
-for i in range(1, 7):
-    for j in range(1,7):
+for i in range(6, 7):
+    for j in range(1,6):
         mat_filename = f"ae2224I_measurement_data_subj{i}_C{j}.mat"
         mat_path = os.path.join(mat_folder, mat_filename)  
     
