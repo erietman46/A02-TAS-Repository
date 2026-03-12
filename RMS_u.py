@@ -16,13 +16,13 @@ for i in range(len(pilots)):
         #looping conditions
         k = j+1
         condition = f"C{k}"
-        error = pilot[condition]["u"]
+        u_0 = pilot[condition]["u"]
 
         sum = 0
 
         for l in range(5):
             #looping columns
-            column = error[:,l]
+            column = u_0[:,l]
             mean_squared = np.mean(column**2)
             sum += np.sqrt(mean_squared)
 
