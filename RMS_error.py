@@ -12,7 +12,7 @@ for i in range(len(pilots)):
     #looping pilots
     pilot = pilots[i]
 
-    for j in range(pilot):
+    for j in range(len(pilot)):
         #Condition C"k"
         #looping conditions
         k = j+1
