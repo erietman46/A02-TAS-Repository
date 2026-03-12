@@ -29,5 +29,5 @@ for i in range(len(pilots)):
         MSE = sum/5
         errors[i,j] = MSE
         
-
+#An array which the rows are pilotsa and columns are conditions
 print(errors)
