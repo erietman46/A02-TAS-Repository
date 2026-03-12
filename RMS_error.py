@@ -1,7 +1,7 @@
 from preprocessing import pilots
 import numpy as np
 
-errors = np.zeros(30)
+errors = np.zeros(36)
 
 #Condition index: x
 x = 0
