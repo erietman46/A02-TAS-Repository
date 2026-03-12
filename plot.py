@@ -51,12 +51,9 @@ for i in range(1,7):
         H_pe_ang = np.unwrap(H_pe_ang, period=360, axis=0)
         Hpxd_ang = np.unwrap(Hpxd_ang, period=360, axis=0)
 
-        
         #Convert to decibels
-
         H_pe_db = 20 * np.log10(H_pe_abs)
         Hpxd_db = 20 * np.log10(Hpxd_abs)
-
 
         #Pilot response frequencies
         w_FC = dataset[i][j]["w_FC"]
