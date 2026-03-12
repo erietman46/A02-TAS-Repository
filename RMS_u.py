@@ -1,8 +1,8 @@
 from preprocessing import pilots
 import numpy as np
 
-#Array to store RMS errors
-errors = np.zeros((6,6))
+#Array to store RMS u
+u = np.zeros((6,6))
 
 
 #RMS will be calculated for all experiments and the average will be taken per condition per pilot.
@@ -16,18 +16,18 @@ for i in range(len(pilots)):
         #looping conditions
         k = j+1
         condition = f"C{k}"
-        error = pilot[condition]["e"]
+        u_0 = pilot[condition]["u"]
 
         sum = 0
 
         for l in range(5):
             #looping columns
-            column = error[:,l]
+            column = u_0[:,l]
             mean_squared = np.mean(column**2)
             sum += np.sqrt(mean_squared)
 
         MSE = sum/5
-        errors[i,j] = MSE
+        u[i,j] = MSE
         
 #An array which the rows are pilots and columns are conditions
-print(errors)
+print(u)
