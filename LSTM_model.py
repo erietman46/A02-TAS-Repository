@@ -2,7 +2,7 @@
 LSTM-based time-series classifier for motion-on vs motion-off behavior.
 
 Pipeline implemented:
-1. Load run-level data from AE2224-I .npz files.
+1. Load run-level data from .npz files that match the AE2224-I naming convention.
 2. Normalize each run separately.
 3. Build labeled short windows from each run.
 4. Train an LSTM classifier per vehicle type.
@@ -10,26 +10,11 @@ Pipeline implemented:
 6. Evaluate with accuracy and confusion matrix.
 7. Compare confidence scores statistically at run level.
 
-Expected filename convention:
-- ae2224I_measurement_data_subj6_C3.npz
-- Subjects: subj1 ... subj6
-- Conditions: C1 ... C6
+Expected signal keys inside each .npz file:
+    e, u, and optionally t
 
-Expected content per .npz file:
-- e: required, tracking/error signal
-- u: required, control input signal
-- label: required unless provided through a manual condition-to-label mapping
-- vehicle_type: optional, defaults to "all_vehicles" if absent
-- time: optional
-- fs: optional
-
-Accepted aliases in .npz files:
-- e, error
-- u, control
-- label, motion_label, motion_on, class_label, y
-- vehicle_type, vehicle, simulator, aircraft
-- time, t
-- fs, sample_rate, sampling_rate
+Each file can contain multiple runs, for example MATLAB-style object arrays of shape (20, 1).
+Metadata such as pilot, condition, repetition, label, and vehicle type are derived from the filename and configuration mappings.
 """
 
 from __future__ import annotations
@@ -37,9 +22,9 @@ from __future__ import annotations
 import copy
 import importlib.util
 import os
-from collections import defaultdict
 import re
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
@@ -47,7 +32,6 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-from sklearn.model_selection import train_test_split
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
@@ -55,7 +39,7 @@ from torch.utils.data import DataLoader, Dataset
 
 @dataclass
 class TrainConfig:
-    data_dir: str = "data_py"
+    data_dir: str = "data_npz"
     window_sizes: Tuple[int, ...] = (32, 64, 96, 128)
     stride_fraction: float = 0.5
     input_combinations: Tuple[Tuple[str, ...], ...] = (
@@ -72,13 +56,33 @@ class TrainConfig:
     weight_decay: float = 1e-4
     max_epochs: int = 40
     patience: int = 7
-    test_size: float = 0.2
-    val_size: float = 0.2
     random_state: int = 42
     min_run_length: int = 128
     num_workers: int = 0
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     save_dir: str = "results_lstm"
+    filename_pattern: str = r"^ae2224I_measurement_data_subj(?P<subject>[1-6])_(?P<condition>C[1-6])\.npz$"
+    signal_keys: Dict[str, Tuple[str, ...]] = field(default_factory=lambda: {
+        "e": ("e",),
+        "u": ("u",),
+        "time": ("t", "time"),
+    })
+    condition_to_label: Dict[str, int] = field(default_factory=lambda: {
+        "C1": 0,  # Gain (P), no motion
+        "C2": 0,  # Single integrator (V), no motion
+        "C3": 0,  # Double integrator (A), no motion
+        "C4": 1,  # Gain (P), motion
+        "C5": 1,  # Single integrator (V), motion
+        "C6": 1,  # Double integrator (A), motion
+    })
+    condition_to_vehicle: Dict[str, str] = field(default_factory=lambda: {
+        "C1": "P",
+        "C2": "V",
+        "C3": "A",
+        "C4": "P",
+        "C5": "V",
+        "C6": "A",
+    })
 
 
 def set_seed(seed: int = 42) -> None:
@@ -114,87 +118,139 @@ def normalize_run_signals(run: Dict) -> Dict:
     run["du"] = safe_zscore(derivative(run["u"], time=time, fs=fs))
     return run
 
-
-AE2224I_FILENAME_RE = re.compile(
-    r"^ae2224I_measurement_data_subj(?P<subject>[1-6])_C(?P<condition>[1-6])\.npz$",
-    re.IGNORECASE,
-)
+FILENAME_HELP = "ae2224I_measurement_data_subj<1-6>_C<1-6>.npz"
 
 
-def parse_ae2224i_filename(file_path: Path) -> Tuple[str, str]:
-    match = AE2224I_FILENAME_RE.match(file_path.name)
-    if match is None:
-        raise ValueError(
-            f"Filename does not match expected pattern ae2224I_measurement_data_subjX_CY.npz: {file_path.name}"
-        )
-    subject_id = f"subj{match.group('subject')}"
-    condition_id = f"C{match.group('condition')}"
-    return subject_id, condition_id
-
-
-def _extract_first_available(npz_data: np.lib.npyio.NpzFile, candidates: Sequence[str], required: bool = True):
-    available = {k.lower(): k for k in npz_data.files}
+def _first_available_key(npz_obj, candidates: Sequence[str], *, required: bool = True):
     for key in candidates:
-        source_key = available.get(key.lower())
-        if source_key is not None:
-            return npz_data[source_key]
+        if key in npz_obj.files:
+            return key
     if required:
-        raise KeyError(f"Missing required key. Tried: {candidates}. Available keys: {npz_data.files}")
+        raise KeyError(f"None of the keys {candidates} were found in {npz_obj.files}")
     return None
 
 
-def _scalar_from_array(value, default=None):
-    if value is None:
-        return default
+def _to_1d_float_array(value) -> np.ndarray:
     arr = np.asarray(value)
-    if arr.size == 0:
-        return default
-    scalar = arr.reshape(-1)[0]
-    if isinstance(scalar, bytes):
-        scalar = scalar.decode('utf-8')
-    return scalar.item() if hasattr(scalar, 'item') else scalar
+    while arr.dtype == object and arr.size == 1:
+        arr = np.asarray(arr.reshape(-1)[0])
+    arr = np.asarray(arr, dtype=np.float32).squeeze()
+    if arr.ndim == 0:
+        arr = arr.reshape(1)
+    return arr.reshape(-1)
 
 
-def load_single_npz_run(npz_file: Path, min_run_length: int = 1) -> Dict | None:
-    subject_id, condition_id = parse_ae2224i_filename(npz_file)
+def _split_npz_field_into_runs(value) -> List[np.ndarray]:
+    arr = np.asarray(value, allow_pickle=True)
+    if arr.dtype == object:
+        return [_to_1d_float_array(item) for item in arr.reshape(-1)]
+    arr = np.asarray(arr)
+    if arr.ndim <= 1:
+        return [_to_1d_float_array(arr)]
+    if arr.ndim == 2 and 1 in arr.shape:
+        flat = arr.reshape(-1)
+        if flat.dtype == object:
+            return [_to_1d_float_array(item) for item in flat]
+        return [_to_1d_float_array(arr)]
+    return [_to_1d_float_array(arr)]
 
-    with np.load(npz_file, allow_pickle=True) as data:
-        e = np.asarray(_extract_first_available(data, ('e', 'error')), dtype=np.float32).squeeze()
-        u = np.asarray(_extract_first_available(data, ('u', 'control')), dtype=np.float32).squeeze()
-        label_raw = _extract_first_available(data, ('label', 'motion_label', 'motion_on', 'class_label', 'y'))
-        vehicle_raw = _extract_first_available(data, ('vehicle_type', 'vehicle', 'simulator', 'aircraft'), required=False)
-        time_raw = _extract_first_available(data, ('time', 't'), required=False)
-        fs_raw = _extract_first_available(data, ('fs', 'sample_rate', 'sampling_rate'), required=False)
 
-    if e.ndim != 1 or u.ndim != 1:
-        raise ValueError(f"Signals e and u must be 1D arrays in {npz_file.name}.")
-
-    n = min(len(e), len(u))
-    if n < min_run_length:
+def _infer_fs_from_time(time_vector: np.ndarray) -> float | None:
+    if time_vector is None or len(time_vector) < 2:
         return None
+    dt = np.diff(time_vector.astype(np.float32))
+    dt = dt[np.isfinite(dt)]
+    if len(dt) == 0:
+        return None
+    median_dt = float(np.median(dt))
+    if abs(median_dt) < 1e-12:
+        return None
+    return float(1.0 / median_dt)
 
-    label_scalar = int(_scalar_from_array(label_raw))
-    vehicle_type = str(_scalar_from_array(vehicle_raw, default='all_vehicles'))
 
-    cleaned = {
-        'e': e[:n],
-        'u': u[:n],
-        'label': label_scalar,
-        'vehicle_type': vehicle_type,
-        'pilot_id': subject_id,
-        'repetition_id': condition_id,
-        'source_file': npz_file.name,
-        'run_id': npz_file.stem,
-    }
+def _condition_label(condition: str, config: TrainConfig) -> int:
+    if condition in config.condition_to_label:
+        return int(config.condition_to_label[condition])
+    raise ValueError(
+        f"No label mapping configured for {condition}. "
+        f"Set TrainConfig.condition_to_label, for example {{'C1': 0, 'C2': 1, ...}}."
+    )
 
-    if time_raw is not None:
-        time_arr = np.asarray(time_raw, dtype=np.float32).squeeze()
-        if time_arr.ndim == 1 and len(time_arr) >= n:
-            cleaned['time'] = time_arr[:n]
-    if fs_raw is not None:
-        cleaned['fs'] = float(_scalar_from_array(fs_raw))
 
-    return normalize_run_signals(cleaned)
+def _condition_vehicle(condition: str, config: TrainConfig) -> str:
+    return str(config.condition_to_vehicle.get(condition, condition))
+
+
+def load_runs_from_npz_dir(data_dir: str, config: TrainConfig, min_run_length: int = 1) -> List[Dict]:
+    data_path = Path(data_dir)
+    if not data_path.exists():
+        raise FileNotFoundError(f"Data directory not found: {data_dir}")
+
+    pattern = re.compile(config.filename_pattern, re.IGNORECASE)
+    npz_files = [p for p in sorted(data_path.glob('*.npz')) if pattern.match(p.name)]
+    if not npz_files:
+        raise FileNotFoundError(
+            f"No .npz files matched the expected naming pattern in {data_dir}. Expected format: {FILENAME_HELP}"
+        )
+
+    expected = {f"ae2224I_measurement_data_subj{s}_C{c}.npz".lower() for s in range(1, 7) for c in range(1, 7)}
+    found = {p.name.lower() for p in npz_files}
+    missing = sorted(expected - found)
+    if missing:
+        print("Warning: missing expected files:")
+        for name in missing:
+            print(f"  - {name}")
+
+    all_runs: List[Dict] = []
+    for npz_file in npz_files:
+        match = pattern.match(npz_file.name)
+        if match is None:
+            continue
+        subject = f"subj{match.group('subject')}"
+        condition = match.group('condition').upper()
+
+        with np.load(npz_file, allow_pickle=True) as npz_obj:
+            e_key = _first_available_key(npz_obj, config.signal_keys['e'])
+            u_key = _first_available_key(npz_obj, config.signal_keys['u'])
+            t_key = _first_available_key(npz_obj, config.signal_keys['time'], required=False)
+
+            e_runs = _split_npz_field_into_runs(npz_obj[e_key])
+            u_runs = _split_npz_field_into_runs(npz_obj[u_key])
+            t_runs = _split_npz_field_into_runs(npz_obj[t_key]) if t_key is not None else [None] * len(e_runs)
+
+            if len(u_runs) != len(e_runs):
+                raise ValueError(f"{npz_file.name}: e has {len(e_runs)} runs but u has {len(u_runs)} runs.")
+            if t_key is not None and len(t_runs) != len(e_runs):
+                raise ValueError(f"{npz_file.name}: e has {len(e_runs)} runs but t has {len(t_runs)} runs.")
+
+            for idx, (e_run, u_run) in enumerate(zip(e_runs, u_runs), start=1):
+                time_run = t_runs[idx - 1] if idx - 1 < len(t_runs) else None
+                n = min(len(e_run), len(u_run), len(time_run) if time_run is not None else 10**12)
+                if n < min_run_length:
+                    continue
+
+                cleaned = {
+                    'e': np.asarray(e_run[:n], dtype=np.float32),
+                    'u': np.asarray(u_run[:n], dtype=np.float32),
+                    'label': _condition_label(condition, config),
+                    'vehicle_type': _condition_vehicle(condition, config),
+                    'pilot_id': subject,
+                    'condition_id': condition,
+                    'repetition_id': f'rep{idx}',
+                    'source_file': npz_file.name,
+                    'run_id': f'{npz_file.stem}_rep{idx}',
+                }
+                if time_run is not None:
+                    cleaned['time'] = np.asarray(time_run[:n], dtype=np.float32)
+                    fs = _infer_fs_from_time(cleaned['time'])
+                    if fs is not None:
+                        cleaned['fs'] = fs
+
+                all_runs.append(normalize_run_signals(cleaned))
+
+    if not all_runs:
+        raise ValueError('No valid runs were loaded from the .npz files. Check run lengths and naming.')
+    return all_runs
 
 
 def extract_runs_from_module(module) -> List[Dict]:
@@ -222,40 +278,52 @@ def import_python_module(py_file: Path):
     return module
 
 
-def load_runs_from_npz_dir(data_dir: str, min_run_length: int = 1) -> List[Dict]:
+def load_runs_from_python_dir(data_dir: str, min_run_length: int = 1) -> List[Dict]:
     data_path = Path(data_dir)
     if not data_path.exists():
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
-    npz_files = [
-        p for p in sorted(data_path.glob('*.npz'))
-        if AE2224I_FILENAME_RE.match(p.name)
+    py_files = [
+        p for p in data_path.glob("*.py")
+        if p.name != Path(__file__).name and not p.name.startswith("__")
     ]
-    if not npz_files:
-        raise FileNotFoundError(
-            f"No .npz files found in {data_dir} matching ae2224I_measurement_data_subjX_CY.npz"
-        )
+    if not py_files:
+        raise FileNotFoundError(f"No Python data files found in: {data_dir}")
 
     all_runs = []
-    for npz_file in npz_files:
-        run = load_single_npz_run(npz_file, min_run_length=min_run_length)
-        if run is not None:
-            all_runs.append(run)
+    for py_file in sorted(py_files):
+        module = import_python_module(py_file)
+        runs = extract_runs_from_module(module)
 
-    expected_names = {
-        f"ae2224I_measurement_data_subj{subj}_C{cond}.npz".lower()
-        for subj in range(1, 7)
-        for cond in range(1, 7)
-    }
-    found_names = {p.name.lower() for p in npz_files}
-    missing_names = sorted(expected_names - found_names)
-    if missing_names:
-        print('Warning: the following expected files were not found:')
-        for name in missing_names:
-            print(f'  - {name}')
+        for idx, run in enumerate(runs):
+            required = {"e", "u", "label", "vehicle_type", "pilot_id", "repetition_id"}
+            missing = required - set(run.keys())
+            if missing:
+                raise KeyError(f"{py_file.name}, run {idx}: missing keys {missing}")
+
+            n = min(len(run["e"]), len(run["u"]))
+            if n < min_run_length:
+                continue
+
+            cleaned = {
+                "e": np.asarray(run["e"][:n], dtype=np.float32),
+                "u": np.asarray(run["u"][:n], dtype=np.float32),
+                "label": int(run["label"]),
+                "vehicle_type": str(run["vehicle_type"]),
+                "pilot_id": str(run["pilot_id"]),
+                "repetition_id": str(run["repetition_id"]),
+                "source_file": py_file.name,
+                "run_id": f"{py_file.stem}_run{idx}",
+            }
+            if "time" in run and run["time"] is not None:
+                cleaned["time"] = np.asarray(run["time"][:n], dtype=np.float32)
+            if "fs" in run and run["fs"] is not None:
+                cleaned["fs"] = float(run["fs"])
+
+            all_runs.append(normalize_run_signals(cleaned))
 
     if not all_runs:
-        raise ValueError('No valid runs were loaded from the matching .npz files.')
+        raise ValueError("No valid runs were loaded.")
     return all_runs
 
 
@@ -348,32 +416,22 @@ def make_loader(windows: Sequence[Dict], batch_size: int, shuffle: bool, num_wor
     return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, collate_fn=collate_fn)
 
 
-def split_runs_by_id(runs: Sequence[Dict], test_size: float, val_size: float, random_state: int):
-    run_ids = [r["run_id"] for r in runs]
-    labels = [r["label"] for r in runs]
+def get_unique_pilot_ids(runs: Sequence[Dict]) -> List[str]:
+    return sorted({str(r["pilot_id"]) for r in runs})
 
-    train_ids, test_ids = train_test_split(
-        run_ids,
-        test_size=test_size,
-        random_state=random_state,
-        stratify=labels,
-    )
 
-    train_runs = [r for r in runs if r["run_id"] in set(train_ids)]
-    test_runs = [r for r in runs if r["run_id"] in set(test_ids)]
+def split_runs_by_pilot(runs: Sequence[Dict], held_out_pilot: str) -> Tuple[List[Dict], List[Dict]]:
+    train_runs = [r for r in runs if str(r["pilot_id"]) != str(held_out_pilot)]
+    test_runs = [r for r in runs if str(r["pilot_id"]) == str(held_out_pilot)]
+    return train_runs, test_runs
 
-    relative_val_size = val_size / (1.0 - test_size)
-    train_labels = [r["label"] for r in train_runs]
-    train_ids_final, val_ids = train_test_split(
-        [r["run_id"] for r in train_runs],
-        test_size=relative_val_size,
-        random_state=random_state,
-        stratify=train_labels,
-    )
 
-    train_final = [r for r in train_runs if r["run_id"] in set(train_ids_final)]
-    val_final = [r for r in train_runs if r["run_id"] in set(val_ids)]
-    return train_final, val_final, test_runs
+def get_leave_one_pilot_out_folds(runs: Sequence[Dict]) -> List[Tuple[str, List[Dict], List[Dict]]]:
+    folds = []
+    for pilot_id in get_unique_pilot_ids(runs):
+        train_runs, test_runs = split_runs_by_pilot(runs, pilot_id)
+        folds.append((pilot_id, train_runs, test_runs))
+    return folds
 
 
 def train_one_epoch(model, loader, optimizer, criterion, device):
@@ -414,7 +472,7 @@ def evaluate_model(model, loader, device):
     y_true, y_pred, y_prob, metas = predict_loader(model, loader, device)
     return {
         "accuracy": accuracy_score(y_true, y_pred),
-        "confusion_matrix": confusion_matrix(y_true, y_pred),
+        "confusion_matrix": confusion_matrix(y_true, y_pred, labels=[0, 1]),
         "classification_report": classification_report(y_true, y_pred, output_dict=True, zero_division=0),
         "y_true": y_true,
         "y_pred": y_pred,
@@ -483,6 +541,121 @@ def build_prediction_table(eval_result: Dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def combine_prediction_tables(prediction_tables: Sequence[pd.DataFrame]) -> Dict:
+    if not prediction_tables:
+        raise ValueError("No prediction tables were provided for combination.")
+
+    combined = pd.concat(prediction_tables, ignore_index=True)
+    y_true = combined["true_label"].to_numpy(dtype=int)
+    y_pred = combined["pred_label"].to_numpy(dtype=int)
+    y_prob = combined["motion_on_confidence"].to_numpy(dtype=float)
+
+    return {
+        "combined_prediction_df": combined,
+        "accuracy": accuracy_score(y_true, y_pred),
+        "confusion_matrix": confusion_matrix(y_true, y_pred, labels=[0, 1]),
+        "classification_report": classification_report(y_true, y_pred, output_dict=True, zero_division=0),
+        "y_true": y_true,
+        "y_pred": y_pred,
+        "y_prob": y_prob,
+    }
+
+
+def fit_lstm_fixed_epochs(train_windows: Sequence[Dict], config: TrainConfig, input_size: int, num_epochs: int):
+    model = LSTMClassifier(
+        input_size=input_size,
+        hidden_size=config.hidden_size,
+        num_layers=config.num_layers,
+        dropout=config.dropout,
+    ).to(config.device)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+    criterion = nn.CrossEntropyLoss()
+    train_loader = make_loader(train_windows, config.batch_size, True, config.num_workers)
+
+    history = []
+    for epoch in range(1, max(1, int(num_epochs)) + 1):
+        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, config.device)
+        history.append({"epoch": epoch, "train_loss": train_loss})
+
+    return model, pd.DataFrame(history)
+
+
+def run_inner_cv_hyperparameter_search(train_runs: Sequence[Dict], vehicle_type: str, config: TrainConfig):
+    inner_folds = get_leave_one_pilot_out_folds(train_runs)
+    if len(inner_folds) < 2:
+        raise ValueError("At least two pilots are required in the training split for inner cross-validation.")
+
+    summary_rows = []
+    fold_rows = []
+
+    for input_vars in config.input_combinations:
+        for window_size in config.window_sizes:
+            fold_metrics = []
+            candidate_failed = False
+
+            for val_pilot, inner_train_runs, val_runs in inner_folds:
+                if len(inner_train_runs) == 0 or len(val_runs) == 0:
+                    candidate_failed = True
+                    break
+                if len({r["label"] for r in inner_train_runs}) < 2:
+                    candidate_failed = True
+                    break
+
+                try:
+                    train_windows = build_window_table(inner_train_runs, window_size, input_vars, config.stride_fraction)
+                    val_windows = build_window_table(val_runs, window_size, input_vars, config.stride_fraction)
+                except ValueError:
+                    candidate_failed = True
+                    break
+
+                model, _, best_epoch, best_val_acc = fit_lstm(
+                    train_windows=train_windows,
+                    val_windows=val_windows,
+                    config=config,
+                    input_size=len(input_vars),
+                )
+
+                fold_metrics.append(
+                    {
+                        "vehicle_type": vehicle_type,
+                        "validation_pilot": val_pilot,
+                        "input_vars": ",".join(input_vars),
+                        "window_size": int(window_size),
+                        "best_epoch": int(best_epoch),
+                        "best_val_accuracy": float(best_val_acc),
+                    }
+                )
+
+            if candidate_failed or not fold_metrics:
+                continue
+
+            fold_df = pd.DataFrame(fold_metrics)
+            fold_rows.append(fold_df)
+            summary_rows.append(
+                {
+                    "vehicle_type": vehicle_type,
+                    "input_vars": ",".join(input_vars),
+                    "window_size": int(window_size),
+                    "mean_inner_val_accuracy": float(fold_df["best_val_accuracy"].mean()),
+                    "std_inner_val_accuracy": float(fold_df["best_val_accuracy"].std(ddof=0)),
+                    "mean_best_epoch": float(fold_df["best_epoch"].mean()),
+                    "num_inner_folds": int(len(fold_df)),
+                }
+            )
+
+    if not summary_rows:
+        raise ValueError("Inner cross-validation could not evaluate any hyperparameter setting.")
+
+    summary_df = pd.DataFrame(summary_rows).sort_values(
+        ["mean_inner_val_accuracy", "std_inner_val_accuracy"],
+        ascending=[False, True],
+    ).reset_index(drop=True)
+    fold_df = pd.concat(fold_rows, ignore_index=True) if fold_rows else pd.DataFrame()
+    best_row = summary_df.iloc[0].to_dict()
+    return best_row, summary_df, fold_df
+
+
 def run_basic_statistics(pred_df: pd.DataFrame) -> Dict[str, Dict]:
     """
     Confidence values are aggregated per run before inferential testing,
@@ -533,66 +706,89 @@ def run_basic_statistics(pred_df: pd.DataFrame) -> Dict[str, Dict]:
 
 
 def run_vehicle_experiment(runs_for_vehicle: Sequence[Dict], vehicle_type: str, config: TrainConfig) -> Dict:
-    train_runs, val_runs, test_runs = split_runs_by_id(
-        runs_for_vehicle,
-        test_size=config.test_size,
-        val_size=config.val_size,
-        random_state=config.random_state,
-    )
+    pilot_ids = get_unique_pilot_ids(runs_for_vehicle)
+    if len(pilot_ids) < 3:
+        raise ValueError("At least three pilots are required for nested pilot-wise cross-validation.")
 
-    search_results = []
-    for input_vars in config.input_combinations:
-        for window_size in config.window_sizes:
-            train_windows = build_window_table(train_runs, window_size, input_vars, config.stride_fraction)
-            val_windows = build_window_table(val_runs, window_size, input_vars, config.stride_fraction)
-            model, history_df, best_epoch, best_val_acc = fit_lstm(
-                train_windows=train_windows,
-                val_windows=val_windows,
-                config=config,
-                input_size=len(input_vars),
-            )
-            search_results.append(
-                {
-                    "vehicle_type": vehicle_type,
-                    "input_vars": ",".join(input_vars),
-                    "window_size": window_size,
-                    "best_epoch": best_epoch,
-                    "best_val_accuracy": best_val_acc,
-                    "history_df": history_df,
-                    "model_state_dict": copy.deepcopy(model.state_dict()),
-                }
-            )
+    prediction_tables = []
+    outer_fold_rows = []
+    inner_search_tables = []
+    inner_fold_tables = []
 
-    search_df = pd.DataFrame(
-        [{k: v for k, v in item.items() if k not in {"history_df", "model_state_dict"}} for item in search_results]
-    ).sort_values("best_val_accuracy", ascending=False)
+    for test_pilot, outer_train_runs, test_runs in get_leave_one_pilot_out_folds(runs_for_vehicle):
+        if len(outer_train_runs) == 0 or len(test_runs) == 0:
+            continue
+        if len({r["label"] for r in outer_train_runs}) < 2:
+            print(f"Skipping outer fold {vehicle_type} / {test_pilot}: training split has only one class.")
+            continue
 
-    best = search_results[int(search_df.index[0])]
-    best_input_vars = tuple(best["input_vars"].split(","))
-    best_window_size = int(best["window_size"])
+        best_row, inner_search_df, inner_fold_df = run_inner_cv_hyperparameter_search(
+            outer_train_runs,
+            vehicle_type,
+            config,
+        )
+        best_input_vars = tuple(str(best_row["input_vars"]).split(","))
+        best_window_size = int(best_row["window_size"])
+        selected_num_epochs = max(1, int(round(float(best_row["mean_best_epoch"]))))
 
-    final_model = LSTMClassifier(
-        input_size=len(best_input_vars),
-        hidden_size=config.hidden_size,
-        num_layers=config.num_layers,
-        dropout=config.dropout,
-    ).to(config.device)
-    final_model.load_state_dict(best["model_state_dict"])
+        train_windows = build_window_table(outer_train_runs, best_window_size, best_input_vars, config.stride_fraction)
+        test_windows = build_window_table(test_runs, best_window_size, best_input_vars, config.stride_fraction)
 
-    test_windows = build_window_table(test_runs, best_window_size, best_input_vars, config.stride_fraction)
-    test_loader = make_loader(test_windows, config.batch_size, False, config.num_workers)
-    test_result = evaluate_model(final_model, test_loader, config.device)
-    pred_df = build_prediction_table(test_result)
-    stats_result = run_basic_statistics(pred_df)
+        final_model, _ = fit_lstm_fixed_epochs(
+            train_windows=train_windows,
+            config=config,
+            input_size=len(best_input_vars),
+            num_epochs=selected_num_epochs,
+        )
+
+        test_loader = make_loader(test_windows, config.batch_size, False, config.num_workers)
+        test_result = evaluate_model(final_model, test_loader, config.device)
+        pred_df = build_prediction_table(test_result)
+        pred_df["outer_test_pilot"] = test_pilot
+        pred_df["selected_input_vars"] = ",".join(best_input_vars)
+        pred_df["selected_window_size"] = best_window_size
+        pred_df["selected_num_epochs"] = selected_num_epochs
+        prediction_tables.append(pred_df)
+
+        fold_accuracy = accuracy_score(pred_df["true_label"], pred_df["pred_label"])
+        outer_fold_rows.append(
+            {
+                "vehicle_type": vehicle_type,
+                "outer_test_pilot": test_pilot,
+                "selected_input_vars": ",".join(best_input_vars),
+                "selected_window_size": best_window_size,
+                "selected_num_epochs": selected_num_epochs,
+                "num_test_runs": int(len(test_runs)),
+                "num_test_windows": int(len(pred_df)),
+                "test_accuracy": float(fold_accuracy),
+            }
+        )
+
+        inner_search_df = inner_search_df.copy()
+        inner_search_df["outer_test_pilot"] = test_pilot
+        inner_search_tables.append(inner_search_df)
+
+        if not inner_fold_df.empty:
+            inner_fold_df = inner_fold_df.copy()
+            inner_fold_df["outer_test_pilot"] = test_pilot
+            inner_fold_tables.append(inner_fold_df)
+
+    if not prediction_tables:
+        raise ValueError(f"No valid outer folds were completed for vehicle type {vehicle_type}.")
+
+    combined_result = combine_prediction_tables(prediction_tables)
+    prediction_df = combined_result.pop("combined_prediction_df")
+    stats_result = run_basic_statistics(prediction_df)
 
     return {
         "vehicle_type": vehicle_type,
-        "search_df": search_df.reset_index(drop=True),
-        "best_input_vars": best_input_vars,
-        "best_window_size": best_window_size,
-        "test_result": test_result,
-        "prediction_df": pred_df,
+        "search_df": pd.concat(inner_search_tables, ignore_index=True) if inner_search_tables else pd.DataFrame(),
+        "inner_fold_df": pd.concat(inner_fold_tables, ignore_index=True) if inner_fold_tables else pd.DataFrame(),
+        "outer_fold_df": pd.DataFrame(outer_fold_rows),
+        "test_result": combined_result,
+        "prediction_df": prediction_df,
         "statistics": stats_result,
+        "num_outer_folds": int(len(outer_fold_rows)),
     }
 
 
@@ -600,20 +796,31 @@ def save_vehicle_results(result: Dict, save_dir: str) -> None:
     vehicle_dir = Path(save_dir) / result["vehicle_type"]
     vehicle_dir.mkdir(parents=True, exist_ok=True)
 
-    result["search_df"].to_csv(vehicle_dir / "hyperparameter_search.csv", index=False)
+    if not result["search_df"].empty:
+        result["search_df"].to_csv(vehicle_dir / "inner_cv_search.csv", index=False)
+    if not result["inner_fold_df"].empty:
+        result["inner_fold_df"].to_csv(vehicle_dir / "inner_cv_fold_scores.csv", index=False)
+    if not result["outer_fold_df"].empty:
+        result["outer_fold_df"].to_csv(vehicle_dir / "outer_cv_fold_scores.csv", index=False)
+
     result["prediction_df"].to_csv(vehicle_dir / "window_predictions.csv", index=False)
     if "aggregated_run_predictions" in result["statistics"]:
         result["statistics"]["aggregated_run_predictions"].to_csv(vehicle_dir / "run_level_confidence.csv", index=False)
 
     cm = result["test_result"]["confusion_matrix"]
-    pd.DataFrame(cm, index=["true_off", "true_on"], columns=["pred_off", "pred_on"]).to_csv(vehicle_dir / "confusion_matrix.csv")
+    pd.DataFrame(cm, index=["true_off", "true_on"], columns=["pred_off", "pred_on"]).to_csv(
+        vehicle_dir / "confusion_matrix.csv"
+    )
 
     with open(vehicle_dir / "summary.txt", "w", encoding="utf-8") as f:
         f.write(f"Vehicle type: {result['vehicle_type']}\n")
-        f.write(f"Best input vars: {result['best_input_vars']}\n")
-        f.write(f"Best window size: {result['best_window_size']}\n")
-        f.write(f"Test accuracy: {result['test_result']['accuracy']:.4f}\n")
+        f.write(f"Outer folds (held-out pilots): {result['num_outer_folds']}\n")
+        f.write(f"Overall cross-validated accuracy: {result['test_result']['accuracy']:.4f}\n")
         f.write(f"Confusion matrix:\n{result['test_result']['confusion_matrix']}\n\n")
+        if not result["outer_fold_df"].empty:
+            f.write("Outer-fold selections and accuracies:\n")
+            f.write(result["outer_fold_df"].to_string(index=False))
+            f.write("\n\n")
         f.write("Statistics:\n")
         for key, value in result["statistics"].items():
             if key == "aggregated_run_predictions":
@@ -624,12 +831,14 @@ def save_vehicle_results(result: Dict, save_dir: str) -> None:
 
 def print_summary(result: Dict) -> None:
     print("=" * 80)
-    print(f"Vehicle type       : {result['vehicle_type']}")
-    print(f"Best input vars    : {result['best_input_vars']}")
-    print(f"Best window size   : {result['best_window_size']}")
-    print(f"Test accuracy      : {result['test_result']['accuracy']:.4f}")
-    print("Confusion matrix:")
+    print(f"Vehicle type                 : {result['vehicle_type']}")
+    print(f"Outer CV folds (pilots)      : {result['num_outer_folds']}")
+    print(f"Overall CV accuracy          : {result['test_result']['accuracy']:.4f}")
+    print("Overall confusion matrix:")
     print(result["test_result"]["confusion_matrix"])
+    if not result["outer_fold_df"].empty:
+        print("Outer-fold selections:")
+        print(result["outer_fold_df"].to_string(index=False))
     print("Statistics:")
     for key, value in result["statistics"].items():
         if key == "aggregated_run_predictions":
@@ -642,7 +851,7 @@ def main(config: TrainConfig):
     set_seed(config.random_state)
     os.makedirs(config.save_dir, exist_ok=True)
 
-    runs = load_runs_from_npz_dir(config.data_dir, min_run_length=config.min_run_length)
+    runs = load_runs_from_npz_dir(config.data_dir, config=config, min_run_length=config.min_run_length)
     runs_by_vehicle = defaultdict(list)
     for run in runs:
         runs_by_vehicle[run["vehicle_type"]].append(run)
@@ -650,11 +859,13 @@ def main(config: TrainConfig):
     all_results = {}
     for vehicle_type, vehicle_runs in runs_by_vehicle.items():
         labels = [r["label"] for r in vehicle_runs]
+        pilot_ids = get_unique_pilot_ids(vehicle_runs)
+
         if len(set(labels)) < 2:
             print(f"Skipping {vehicle_type}: only one class present.")
             continue
-        if len(vehicle_runs) < 6:
-            print(f"Skipping {vehicle_type}: not enough runs for train/val/test split.")
+        if len(pilot_ids) < 3:
+            print(f"Skipping {vehicle_type}: need at least three pilots for nested pilot-wise cross-validation.")
             continue
 
         result = run_vehicle_experiment(vehicle_runs, vehicle_type, config)
@@ -663,13 +874,13 @@ def main(config: TrainConfig):
         print_summary(result)
 
     if not all_results:
-        print("No vehicle experiments completed. Check your data volume and labels.")
+        print("No vehicle experiments completed. Check your data volume, labels, and pilot coverage.")
     return all_results
 
 
 if __name__ == "__main__":
     CONFIG = TrainConfig(
-        data_dir="data_npz",  # folder with ae2224I_measurement_data_subjX_CY.npz files
+        data_dir="data_npz",   # change this to your folder with AE2224-I .npz files
         window_sizes=(32, 64, 96, 128),
         stride_fraction=0.5,
         input_combinations=(
@@ -686,13 +897,9 @@ if __name__ == "__main__":
         weight_decay=1e-4,
         max_epochs=40,
         patience=7,
-        test_size=0.2,
-        val_size=0.2,
         random_state=42,
         min_run_length=128,
         num_workers=0,
         save_dir="results_lstm",
     )
-
     main(CONFIG)
-    
