@@ -1,12 +1,12 @@
 from preprocessing import pilots
 import numpy as np
 
-#Array to store RMS errors
+#Array to store RMS u
 u = np.zeros((6,6))
 
 
-#To calculate the mean square error for all conditions of all pilots and take the average of the their tests.
-#P V A no motion then motion 1 --> 6
+#RMS will be calculated for all experiments and the average will be taken per condition per pilot.
+#P V A no motion then motion C1 --> C6
 for i in range(len(pilots)):
     #looping pilots
     pilot = pilots[i]
@@ -29,5 +29,5 @@ for i in range(len(pilots)):
         MSE = sum/5
         u[i,j] = MSE
         
-#An array which the rows are pilotsa and columns are conditions
+#An array which the rows are pilots and columns are conditions
 print(u)
