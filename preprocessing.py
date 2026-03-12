@@ -51,6 +51,13 @@ d54 = np.load("data/python_data/ae2224I_measurement_data_subj5_C4.npz")
 d55 = np.load("data/python_data/ae2224I_measurement_data_subj5_C5.npz")
 d56 = np.load("data/python_data/ae2224I_measurement_data_subj5_C6.npz")
 
+d61 = np.load("data/python_data/ae2224I_measurement_data_subj6_C1.npz")
+d62 = np.load("data/python_data/ae2224I_measurement_data_subj6_C2.npz")
+d63 = np.load("data/python_data/ae2224I_measurement_data_subj6_C3.npz")
+d64 = np.load("data/python_data/ae2224I_measurement_data_subj6_C4.npz")
+d65 = np.load("data/python_data/ae2224I_measurement_data_subj6_C5.npz")
+d66 = np.load("data/python_data/ae2224I_measurement_data_subj6_C6.npz")
+
 pilot1 = {
     "C1": d11,
     "C2": d12,
@@ -91,5 +98,13 @@ pilot5 = {
     "C5": d55,
     "C6": d56
 }
+pilot6 = {
+    "C1": d61,
+    "C2": d62,
+    "C3": d63,
+    "C4": d64,
+    "C5": d65,
+    "C6": d66
+}
 
-pilots = [pilot1, pilot2, pilot3, pilot4, pilot5]
+pilots = [pilot1, pilot2, pilot3, pilot4, pilot5, pilot6]
