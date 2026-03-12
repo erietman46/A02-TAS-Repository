@@ -2,7 +2,8 @@ import numpy as np
 from pathlib import Path
 
 path = Path("./data/python_data")
-data = [[None for i in range(7)] for j in range(7)]
+data = [[None for i in range(6)] for j in range(6)]
+data = np.array(data)
 
 
 for subject in range(1, 7):
