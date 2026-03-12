@@ -39,7 +39,7 @@ from torch.utils.data import DataLoader, Dataset
 
 @dataclass
 class TrainConfig:
-    data_dir: str = "data_npz"
+    data_dir: str = "python_data"
     window_sizes: Tuple[int, ...] = (32, 64, 96, 128)
     stride_fraction: float = 0.5
     input_combinations: Tuple[Tuple[str, ...], ...] = (
