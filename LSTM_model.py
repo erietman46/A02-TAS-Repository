@@ -181,16 +181,16 @@ def _condition_vehicle(condition: str, config: TrainConfig) -> str:
     return str(config.condition_to_vehicle.get(condition, condition))
 
 
-def load_runs_from_npz_dir(data_dir: str, config: TrainConfig, min_run_length: int = 1) -> List[Dict]:
-    data_path = Path(data_dir)
+def load_runs_from_npz_dir(python_data: str, config: TrainConfig, min_run_length: int = 1) -> List[Dict]:
+    data_path = Path(python_data)
     if not data_path.exists():
-        raise FileNotFoundError(f"Data directory not found: {data_dir}")
+        raise FileNotFoundError(f"Data directory not found: {python_data}")
 
     pattern = re.compile(config.filename_pattern, re.IGNORECASE)
     npz_files = [p for p in sorted(data_path.glob('*.npz')) if pattern.match(p.name)]
     if not npz_files:
         raise FileNotFoundError(
-            f"No .npz files matched the expected naming pattern in {data_dir}. Expected format: {FILENAME_HELP}"
+            f"No .npz files matched the expected naming pattern in {python_data}. Expected format: {FILENAME_HELP}"
         )
 
     expected = {f"ae2224I_measurement_data_subj{s}_C{c}.npz".lower() for s in range(1, 7) for c in range(1, 7)}
@@ -278,17 +278,17 @@ def import_python_module(py_file: Path):
     return module
 
 
-def load_runs_from_python_dir(data_dir: str, min_run_length: int = 1) -> List[Dict]:
-    data_path = Path(data_dir)
+def load_runs_from_python_dir(python_data: str, min_run_length: int = 1) -> List[Dict]:
+    data_path = Path(python_data)
     if not data_path.exists():
-        raise FileNotFoundError(f"Data directory not found: {data_dir}")
+        raise FileNotFoundError(f"Data directory not found: {python_data}")
 
     py_files = [
         p for p in data_path.glob("*.py")
         if p.name != Path(__file__).name and not p.name.startswith("__")
     ]
     if not py_files:
-        raise FileNotFoundError(f"No Python data files found in: {data_dir}")
+        raise FileNotFoundError(f"No Python data files found in: {python_data}")
 
     all_runs = []
     for py_file in sorted(py_files):
@@ -851,7 +851,7 @@ def main(config: TrainConfig):
     set_seed(config.random_state)
     os.makedirs(config.save_dir, exist_ok=True)
 
-    runs = load_runs_from_npz_dir(config.data_dir, config=config, min_run_length=config.min_run_length)
+    runs = load_runs_from_npz_dir(config.python_data, config=config, min_run_length=config.min_run_length)
     runs_by_vehicle = defaultdict(list)
     for run in runs:
         runs_by_vehicle[run["vehicle_type"]].append(run)
@@ -880,7 +880,7 @@ def main(config: TrainConfig):
 
 if __name__ == "__main__":
     CONFIG = TrainConfig(
-        data_dir="data_npz",   # change this to your folder with AE2224-I .npz files
+        data_dir="python_data",   # change this to your folder with AE2224-I .npz files
         window_sizes=(32, 64, 96, 128),
         stride_fraction=0.5,
         input_combinations=(
