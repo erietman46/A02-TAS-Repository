@@ -39,6 +39,20 @@ for file in os.listdir(folder):
             if not key.startswith("__"):
                 dataset[subject][condition][key] = value
 
+'''
+TIME HISTORIES 
+• the error signal               e [deg]   8192x5 
+• the control signal             u [deg]   8192x5  
+• the controlled yaw angle x [deg]   8192x5 
+• the target signal  ft [deg]   8192x1 
+• the disturbance signal        fd [deg]  8192x1 
+• the time vector    t [s]   8192x1 
+ 
+MEASURED PILOT FREQUENCY RESPONSES 
+• the Hpe (visual) frequency response Hpe_FC [complex numbers] 20x1 
+• the Hpxd (motion) frequency response  Hpxd_FC [complex numbers] 20x1 
+• the frequency vector   w_FC [rad/s]   20x1    
+'''
 
 """
 Example usage:
