@@ -39,8 +39,6 @@ for i in range(1,7):
 # loop for experiments
     for j in range(1,7):
         
-
-        print()
         #Absolute values of pilot responses
         H_pe_abs = abs(dataset[i][j]["Hpe_FC"])
         Hpxd_abs = abs(dataset[i][j]["Hpxd_FC"])
@@ -49,8 +47,11 @@ for i in range(1,7):
         H_pe_ang = np.angle(dataset[i][j]["Hpe_FC"], deg=True)
         Hpxd_ang = np.angle(dataset[i][j]["Hpxd_FC"], deg=True)
 
-        
+        #Unwrap data
+        H_pe_ang = np.unwrap(H_pe_ang, period=360, axis=0)
+        Hpxd_ang = np.unwrap(Hpxd_ang, period=360, axis=0)
 
+        
         #Convert to decibels
 
         H_pe_db = 20 * np.log10(H_pe_abs)
@@ -91,6 +92,7 @@ for i in range(1,7):
 #Code to be able to call a single pilot and condition Bode plot
 def plot_single_pilot_and_conditon(i,j):
         
+        #Absolute values of pilot responses
         H_pe_abs = abs(dataset[i][j]["Hpe_FC"])
         Hpxd_abs = abs(dataset[i][j]["Hpxd_FC"])
 
@@ -98,14 +100,19 @@ def plot_single_pilot_and_conditon(i,j):
         H_pe_ang = np.angle(dataset[i][j]["Hpe_FC"], deg=True)
         Hpxd_ang = np.angle(dataset[i][j]["Hpxd_FC"], deg=True)
 
+        #Unwrap data
+        H_pe_ang = np.unwrap(H_pe_ang, period=360, axis=0)
+        Hpxd_ang = np.unwrap(Hpxd_ang, period=360, axis=0)
+
+        
         #Convert to decibels
+
         H_pe_db = 20 * np.log10(H_pe_abs)
         Hpxd_db = 20 * np.log10(Hpxd_abs)
 
 
         #Pilot response frequencies
         w_FC = dataset[i][j]["w_FC"]
-
     
         plt.figure(figsize=(10, 4))
 
@@ -128,6 +135,8 @@ def plot_single_pilot_and_conditon(i,j):
         plt.title(f"Subject {i}, Condition {j}")
         plt.grid(True, which="both")
         plt.legend()
-    
+
         plt.tight_layout()
-        # plt.show() 
+        plt.savefig(f"FIGURES/Subject {i}, Condition {j}")
+        plt.close()
+        # plt.show()
