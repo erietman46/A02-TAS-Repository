@@ -46,38 +46,57 @@ def Hpxd_model(w, Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm, zeta_nm):
 
 
 # ==============================================================================
-# COST FUNCTION
+# FITTING HELPERS
 # ==============================================================================
 
-def cost_function(params, w, vis_data, vest_data, condition, weight_vis=1.0, weight_vest=1.0):
-    """
-    Joint cost function over visual and vestibular models.
+def prepare_fit_inputs(subject, condition):
+    """Load and flatten the data used during fitting once per subject/condition."""
+    data = dataset[subject][condition]
+    w = data["w_FC"].flatten().astype(float)
+    vis_data = data["Hpe_FC"].flatten()
+    vest_data = data["Hpxd_FC"].flatten()
 
-    Parameter vector layout depends on condition:
-      - No-motion (C1-C3): only visual params are meaningful.
-        params = [Kp, TL, TI, tau, omega_nm_vis, zeta_nm_vis]
-      - Motion (C4-C6): visual + vestibular params fitted together.
-        params = [Kp, TL, TI, tau, omega_nm_vis, zeta_nm_vis,
-                  Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm_vest, zeta_nm_vest]
+    return {
+        "w": w,
+        "vis_data": vis_data,
+        "vest_data": vest_data,
+        "vis_scale": np.sqrt(np.abs(vis_data) ** 2 + 1e-12),
+        "vest_scale": np.sqrt(np.abs(vest_data) ** 2 + 1e-12),
+        "condition": condition,
+        "is_motion": condition in [4, 5, 6],
+    }
 
-    Neuromuscular parameters are fitted independently for each model.
-    Cost is a normalised sum of squared errors in the complex frequency domain.
+
+def residual_vector(params, fit_input, weight_vis=1.0, weight_vest=1.0):
     """
-    # --- Visual params (always present) ---
+    Weighted residual vector over visual and vestibular complex frequency data.
+
+    The optimizer works on stacked real and imaginary residuals so the local
+    least-squares step can use an algorithm tailored to residual minimization.
+    """
+    w = fit_input["w"]
+    vis_data = fit_input["vis_data"]
+
     Kp, TL, TI, tau, omega_nm_vis, zeta_nm_vis = params[:6]
 
     vis_model = Hpe_model(w, Kp, TL, TI, tau, omega_nm_vis, zeta_nm_vis)
-    err_vis = np.abs(vis_data - vis_model)**2 / (np.abs(vis_data)**2 + 1e-12)
-    cost = weight_vis * np.sum(err_vis)
+    vis_residual = np.sqrt(weight_vis) * (vis_data - vis_model) / fit_input["vis_scale"]
+    residuals = [vis_residual.real, vis_residual.imag]
 
-    # --- Vestibular params (motion conditions only) ---
-    if condition in [4, 5, 6]:
+    if fit_input["is_motion"]:
+        vest_data = fit_input["vest_data"]
         Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm_vest, zeta_nm_vest = params[6:]
         vest_model = Hpxd_model(w, Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm_vest, zeta_nm_vest)
-        err_vest = np.abs(vest_data - vest_model)**2 / (np.abs(vest_data)**2 + 1e-12)
-        cost += weight_vest * np.sum(err_vest)
+        vest_residual = np.sqrt(weight_vest) * (vest_data - vest_model) / fit_input["vest_scale"]
+        residuals.extend([vest_residual.real, vest_residual.imag])
 
-    return float(np.real(cost))
+    return np.concatenate(residuals)
+
+
+def cost_function(params, fit_input, weight_vis=1.0, weight_vest=1.0):
+    """Scalar objective used by global optimizers."""
+    residuals = residual_vector(params, fit_input, weight_vis=weight_vis, weight_vest=weight_vest)
+    return float(np.dot(residuals, residuals))
 
 
 # ==============================================================================
@@ -116,12 +135,8 @@ def fit_subject_condition(subject, condition, n_restarts=5):
 
     Returns a dict with fitted parameters and the final cost value.
     """
-    data    = dataset[subject][condition]
-    w       = data["w_FC"].flatten().astype(float)
-    vis_data  = data["Hpe_FC"].flatten()
-    vest_data = data["Hpxd_FC"].flatten()
-
-    is_motion = condition in [4, 5, 6]
+    fit_input = prepare_fit_inputs(subject, condition)
+    is_motion = fit_input["is_motion"]
 
     if is_motion:
         x0     = VIS_X0 + VEST_X0
@@ -138,33 +153,43 @@ def fit_subject_condition(subject, condition, n_restarts=5):
     de_result = opt.differential_evolution(
         cost_function,
         bounds=bounds,
-        args=(w, vis_data, vest_data, condition),
+        args=(fit_input,),
         seed=42,
-        maxiter=500,
-        tol=1e-8,
-        popsize=15,
+        maxiter=300,
+        tol=1e-6,
+        popsize=10,
         mutation=(0.5, 1.5),
         recombination=0.7,
-        polish=True,
+        polish=False,
     )
 
     if de_result.fun < best_cost:
         best_cost   = de_result.fun
         best_result = de_result
 
-    # --- Local refinement from multiple starting points ---
+    local_starts = [np.array(de_result.x, dtype=float), np.array(x0, dtype=float)]
     for k in range(n_restarts):
-        rng  = np.random.default_rng(seed=k * 7)
-        x0_k = np.array([rng.uniform(lo, hi) for lo, hi in bounds])
+        rng = np.random.default_rng(seed=k * 7)
+        local_starts.append(np.array([rng.uniform(lo, hi) for lo, hi in bounds], dtype=float))
 
-        res = opt.minimize(
-            cost_function,
+    lower_bounds = np.array([lo for lo, _ in bounds], dtype=float)
+    upper_bounds = np.array([hi for _, hi in bounds], dtype=float)
+
+    # --- Local refinement from multiple starting points ---
+    for x0_k in local_starts:
+        x0_k = np.clip(x0_k, lower_bounds, upper_bounds)
+        res = opt.least_squares(
+            residual_vector,
             x0_k,
-            args=(w, vis_data, vest_data, condition),
-            method="L-BFGS-B",
-            bounds=bounds,
-            options={"maxiter": 2000, "ftol": 1e-12, "gtol": 1e-8},
+            args=(fit_input,),
+            bounds=(lower_bounds, upper_bounds),
+            method="trf",
+            max_nfev=4000,
+            xtol=1e-10,
+            ftol=1e-10,
+            gtol=1e-10,
         )
+        res.fun = float(np.dot(res.fun, res.fun))
 
         if res.fun < best_cost:
             best_cost   = res.fun
