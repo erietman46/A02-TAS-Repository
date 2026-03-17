@@ -3,86 +3,91 @@ from __future__ import annotations
 """
 LSTM classifier for motion-on vs motion-off behavior in the AE2224-I dataset.
 
-Dataset assumptions
--------------------
-Folder layout expected by default:
-    A02-TAS-Repository/
-      LSTM_model.py
-      data/
-        python_data/
-          ae2224I_measurement_data_subj1_C1.npz
-          ...
-          ae2224I_measurement_data_subj6_C6.npz
+What this script does
+---------------------
+1. Loads all .npz files from the AE2224-I folder.
+2. Normalizes each run separately.
+3. Creates short time windows from each run.
+4. Trains one LSTM per vehicle type (P, V, A).
+5. Uses pilot-wise nested cross-validation:
+   - outer loop: train on 5 pilots, test on 1 pilot
+   - inner loop: choose the best input signals and window size
+6. Uses the GPU automatically when CUDA is available.
+7. Saves simple summaries, tables, and graphs that are easy to read.
 
-File naming convention:
-    ae2224I_measurement_data_subj<1-6>_C<1-6>.npz
+Folder layout expected by default
+---------------------------------
+A02-TAS-Repository/
+  LSTM_model.py
+  data/
+    python_data/
+      ae2224I_measurement_data_subj1_C1.npz
+      ...
+      ae2224I_measurement_data_subj6_C6.npz
 
-Condition mapping:
-    C1 = Gain (P), no motion
-    C2 = Single integrator (V), no motion
-    C3 = Double integrator (A), no motion
-    C4 = Gain (P), motion
-    C5 = Single integrator (V), motion
-    C6 = Double integrator (A), motion
-
-Expected signal keys inside each .npz:
-    e, u, and optionally t
-
-Each .npz may contain multiple runs, for example MATLAB-style object arrays of shape (20, 1).
-Each contained run becomes one repetition.
+Condition mapping
+-----------------
+C1 = Gain (P), no motion
+C2 = Single integrator (V), no motion
+C3 = Double integrator (A), no motion
+C4 = Gain (P), motion
+C5 = Single integrator (V), motion
+C6 = Double integrator (A), motion
 """
 
 import copy
 import csv
 import json
-import math
-import time
 import re
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, Dataset
 
 try:
     from scipy import stats  # type: ignore
-except Exception:  # pragma: no cover
+except Exception:
     stats = None
+
+try:
+    import matplotlib.pyplot as plt  # type: ignore
+except Exception:
+    plt = None
 
 
 @dataclass
 class TrainConfig:
     data_dir: Optional[str | Path] = None
     save_dir: Optional[str | Path] = None
-    window_sizes: Tuple[int, ...] = (64, 96)
-    stride_fraction: float = 1.0
+    window_sizes: Tuple[int, ...] = (32, 64, 96, 128)
+    stride_fraction: float = 0.5
     input_combinations: Tuple[Tuple[str, ...], ...] = (
         ("e", "u"),
+        ("e", "u", "de"),
+        ("e", "u", "du"),
         ("e", "u", "de", "du"),
     )
     batch_size: int = 256
-    hidden_size: int = 32
-    num_layers: int = 1
+    hidden_size: int = 64
+    num_layers: int = 2
     dropout: float = 0.2
     learning_rate: float = 1e-3
     weight_decay: float = 1e-4
-    max_epochs: int = 20
-    patience: int = 4
-    screen_max_epochs: int = 6
-    screen_patience: int = 2
-    screen_num_folds: int = 2
-    top_k_candidates: int = 1
-    max_windows_per_run: Optional[int] = 24
-    precompute_windows: bool = True
+    max_epochs: int = 40
+    patience: int = 7
     random_state: int = 42
     min_run_length: int = 128
     num_workers: int = 0
-    pin_memory: Optional[bool] = None
-    device: str = "auto"
+    device: str = "cuda"
+    use_mixed_precision: bool = True
+    pin_memory: bool = True
     filename_pattern: str = r"^ae2224I_measurement_data_subj(?P<subject>[1-6])_(?P<condition>C[1-6])\.npz$"
     signal_keys: Dict[str, Tuple[str, ...]] = field(default_factory=lambda: {
         "e": ("e",),
@@ -120,22 +125,23 @@ class ProgressTracker:
         self.current_label = label
         self.current_planned_epochs = max(1, int(planned_epochs))
         self.current_epoch = 0
-        self._print_status(prefix="START", newline=True)
+        self._print_status("START", newline=True)
 
     def update_epoch(self, epoch: int) -> None:
         self.current_epoch = max(0, int(epoch))
-        self._print_status(prefix="RUN", newline=False)
+        self._print_status("RUN", newline=False)
 
     def finish_training(self, actual_epochs: int) -> None:
         self.current_epoch = max(0, int(actual_epochs))
         self.completed_trainings += 1
-        self._print_status(prefix="DONE", newline=True)
+        self._print_status("DONE", newline=True)
 
     def _fraction_complete(self) -> float:
         current_fraction = min(1.0, self.current_epoch / max(1, self.current_planned_epochs))
         return min(1.0, (self.completed_trainings + current_fraction) / self.total_trainings)
 
-    def _format_seconds(self, seconds: float) -> str:
+    @staticmethod
+    def _format_seconds(seconds: float) -> str:
         if not np.isfinite(seconds) or seconds < 0:
             return "--:--:--"
         seconds = int(round(seconds))
@@ -146,9 +152,10 @@ class ProgressTracker:
     def _status_message(self, prefix: str) -> str:
         elapsed = time.time() - self.start_time
         frac = self._fraction_complete()
-        eta = (elapsed / frac - elapsed) if frac > 1e-9 else float('inf')
+        eta = (elapsed / frac - elapsed) if frac > 1e-9 else float("inf")
+        current_num = min(self.completed_trainings + 1, self.total_trainings)
         return (
-            f"[{prefix}] training {min(self.completed_trainings + 1, self.total_trainings)}/{self.total_trainings} | "
+            f"[{prefix}] model {current_num}/{self.total_trainings} | "
             f"overall {frac * 100:6.2f}% | epoch {self.current_epoch}/{self.current_planned_epochs} | "
             f"elapsed {self._format_seconds(elapsed)} | ETA {self._format_seconds(eta)} | "
             f"{self.current_label}"
@@ -162,36 +169,9 @@ class ProgressTracker:
             print(message, end="\r", flush=True)
 
 
-
-
 FILENAME_HELP = "ae2224I_measurement_data_subj<1-6>_C<1-6>.npz"
-
-
-def resolve_device(requested_device: str) -> str:
-    requested = str(requested_device).lower()
-    if requested == "auto":
-        if torch.cuda.is_available():
-            return "cuda"
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return "mps"
-        return "cpu"
-    if requested.startswith("cuda") and not torch.cuda.is_available():
-        print("CUDA was requested but this PyTorch installation cannot see a CUDA GPU. Falling back to CPU.")
-        return "cpu"
-    if requested == "mps" and (not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available()):
-        print("MPS was requested but is not available. Falling back to CPU.")
-        return "cpu"
-    return requested
-
-
-def configure_runtime(config: TrainConfig) -> None:
-    config.device = resolve_device(config.device)
-    if config.pin_memory is None:
-        config.pin_memory = str(config.device).startswith("cuda")
-    if str(config.device).startswith("cuda"):
-        torch.backends.cudnn.benchmark = True
-        if hasattr(torch, "set_float32_matmul_precision"):
-            torch.set_float32_matmul_precision("high")
+LABEL_NAMES = {0: "No motion", 1: "Motion"}
+VEHICLE_NAMES = {"P": "Gain (P)", "V": "Single integrator (V)", "A": "Double integrator (A)"}
 
 
 def set_seed(seed: int) -> None:
@@ -199,6 +179,23 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.benchmark = True
+    try:
+        torch.set_float32_matmul_precision("high")
+    except Exception:
+        pass
+
+
+def resolve_device(config: TrainConfig) -> str:
+    requested = str(config.device).lower()
+    if requested.startswith("cuda"):
+        if torch.cuda.is_available():
+            return "cuda"
+        print("WARNING: CUDA was requested, but no CUDA GPU is available. Falling back to CPU.")
+        return "cpu"
+    if requested == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    return requested
 
 
 def accuracy_score_np(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -212,60 +209,12 @@ def accuracy_score_np(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 def confusion_matrix_np(y_true: np.ndarray, y_pred: np.ndarray, labels: Sequence[int] = (0, 1)) -> np.ndarray:
     y_true = np.asarray(y_true, dtype=int)
     y_pred = np.asarray(y_pred, dtype=int)
-    labels = list(labels)
     idx = {label: i for i, label in enumerate(labels)}
     cm = np.zeros((len(labels), len(labels)), dtype=int)
     for yt, yp in zip(y_true, y_pred):
         if yt in idx and yp in idx:
             cm[idx[yt], idx[yp]] += 1
     return cm
-
-
-def classification_report_np(y_true: np.ndarray, y_pred: np.ndarray, labels: Sequence[int] = (0, 1)) -> Dict[str, Dict[str, float]]:
-    y_true = np.asarray(y_true, dtype=int)
-    y_pred = np.asarray(y_pred, dtype=int)
-    report: Dict[str, Dict[str, float]] = {}
-    supports: List[int] = []
-    precisions: List[float] = []
-    recalls: List[float] = []
-    f1s: List[float] = []
-
-    for label in labels:
-        tp = int(np.sum((y_true == label) & (y_pred == label)))
-        fp = int(np.sum((y_true != label) & (y_pred == label)))
-        fn = int(np.sum((y_true == label) & (y_pred != label)))
-        support = int(np.sum(y_true == label))
-        precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
-        recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
-        f1 = float(2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
-        report[str(label)] = {
-            "precision": precision,
-            "recall": recall,
-            "f1-score": f1,
-            "support": support,
-        }
-        supports.append(support)
-        precisions.append(precision)
-        recalls.append(recall)
-        f1s.append(f1)
-
-    weights = np.asarray(supports, dtype=float)
-    weight_sum = float(weights.sum()) if float(weights.sum()) > 0 else 1.0
-    total_support = int(np.sum(supports))
-    report["accuracy"] = {"value": accuracy_score_np(y_true, y_pred)}
-    report["macro avg"] = {
-        "precision": float(np.mean(precisions)) if precisions else 0.0,
-        "recall": float(np.mean(recalls)) if recalls else 0.0,
-        "f1-score": float(np.mean(f1s)) if f1s else 0.0,
-        "support": total_support,
-    }
-    report["weighted avg"] = {
-        "precision": float(np.sum(np.asarray(precisions) * weights) / weight_sum),
-        "recall": float(np.sum(np.asarray(recalls) * weights) / weight_sum),
-        "f1-score": float(np.sum(np.asarray(f1s) * weights) / weight_sum),
-        "support": total_support,
-    }
-    return report
 
 
 def safe_zscore(x: np.ndarray) -> np.ndarray:
@@ -282,7 +231,7 @@ def derivative(x: np.ndarray, time: Optional[np.ndarray] = None, fs: Optional[fl
     if time is not None:
         time = np.asarray(time, dtype=np.float32).reshape(-1)
         if len(time) != len(x):
-            raise ValueError("time must have same length as signal")
+            raise ValueError("time must have the same length as the signal")
         return np.gradient(x, time).astype(np.float32)
     dt = 1.0 / fs if fs not in (None, 0) else 1.0
     return np.gradient(x, dt).astype(np.float32)
@@ -292,10 +241,10 @@ def normalize_run_signals(run: Dict[str, Any]) -> Dict[str, Any]:
     out = copy.deepcopy(run)
     raw_e = np.asarray(out["e"], dtype=np.float32)
     raw_u = np.asarray(out["u"], dtype=np.float32)
-    time = out.get("time")
+    time_vector = out.get("time")
     fs = out.get("fs")
-    out["de"] = safe_zscore(derivative(raw_e, time=time, fs=fs))
-    out["du"] = safe_zscore(derivative(raw_u, time=time, fs=fs))
+    out["de"] = safe_zscore(derivative(raw_e, time=time_vector, fs=fs))
+    out["du"] = safe_zscore(derivative(raw_u, time=time_vector, fs=fs))
     out["e"] = safe_zscore(raw_e)
     out["u"] = safe_zscore(raw_u)
     return out
@@ -322,24 +271,19 @@ def _to_1d_float_array(value: Any) -> np.ndarray:
 
 def _split_npz_field_into_runs(value: Any) -> List[np.ndarray]:
     arr = np.asarray(value)
-
     if arr.dtype == object:
         return [_to_1d_float_array(item) for item in arr.reshape(-1)]
-
     if arr.ndim <= 1:
         return [_to_1d_float_array(arr)]
-
     if arr.ndim == 2 and 1 in arr.shape:
         flat = arr.reshape(-1)
         if flat.dtype == object:
             return [_to_1d_float_array(item) for item in flat]
         return [_to_1d_float_array(arr)]
-
     if arr.ndim == 2:
         if arr.shape[0] < arr.shape[1]:
             return [_to_1d_float_array(arr[i, :]) for i in range(arr.shape[0])]
         return [_to_1d_float_array(arr[:, i]) for i in range(arr.shape[1])]
-
     return [_to_1d_float_array(arr)]
 
 
@@ -358,12 +302,10 @@ def _infer_fs_from_time(time_vector: Optional[np.ndarray]) -> Optional[float]:
 
 def resolve_data_dir(config: TrainConfig, script_dir: Path) -> Path:
     candidates: List[Path] = []
-
     if config.data_dir not in (None, ""):
         p = Path(config.data_dir)
         candidates.append(p if p.is_absolute() else script_dir / p)
         candidates.append(p if p.is_absolute() else Path.cwd() / p)
-
     candidates.extend([
         script_dir / "data" / "python_data",
         script_dir / "python_data",
@@ -373,8 +315,8 @@ def resolve_data_dir(config: TrainConfig, script_dir: Path) -> Path:
         script_dir.parent / "python_data",
     ])
 
-    seen: set[str] = set()
     unique_candidates: List[Path] = []
+    seen: set[str] = set()
     for candidate in candidates:
         key = str(candidate.resolve()) if candidate.exists() else str(candidate)
         if key not in seen:
@@ -388,8 +330,7 @@ def resolve_data_dir(config: TrainConfig, script_dir: Path) -> Path:
     checked = "\n".join(str(p) for p in unique_candidates)
     raise FileNotFoundError(
         "Could not find the data directory. Checked:\n"
-        f"{checked}\n\n"
-        "Expected to find your .npz files in a folder like: data/python_data"
+        f"{checked}\n\nExpected to find your .npz files in a folder like: data/python_data"
     )
 
 
@@ -427,7 +368,7 @@ def load_runs_from_npz_dir(data_dir: str | Path, config: TrainConfig, min_run_le
             continue
 
         subject = f"subj{match.group('subject')}"
-        condition = match.group('condition').upper()
+        condition = match.group("condition").upper()
         label = int(config.condition_to_label[condition])
         vehicle = str(config.condition_to_vehicle[condition])
 
@@ -441,9 +382,8 @@ def load_runs_from_npz_dir(data_dir: str | Path, config: TrainConfig, min_run_le
             if len(e_runs) != len(u_runs):
                 raise ValueError(f"{npz_file.name}: number of e runs ({len(e_runs)}) != number of u runs ({len(u_runs)})")
 
-            t_runs: List[Optional[np.ndarray]]
             if t_key is None:
-                t_runs = [None] * len(e_runs)
+                t_runs: List[Optional[np.ndarray]] = [None] * len(e_runs)
             else:
                 raw_t_runs = _split_npz_field_into_runs(npz_obj[t_key])
                 if len(raw_t_runs) == 1 and len(e_runs) > 1:
@@ -530,8 +470,7 @@ class LSTMClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         _, (h_n, _) = self.lstm(x)
-        last_hidden = h_n[-1]
-        return self.classifier(last_hidden)
+        return self.classifier(h_n[-1])
 
 
 def collate_fn(batch: Sequence[Any]):
@@ -539,33 +478,27 @@ def collate_fn(batch: Sequence[Any]):
     return torch.stack(xs), torch.stack(ys), list(metas)
 
 
-def make_loader(windows: Sequence[Dict[str, Any]], batch_size: int, shuffle: bool, num_workers: int, pin_memory: bool = False) -> DataLoader:
+def make_loader(windows: Sequence[Dict[str, Any]], batch_size: int, shuffle: bool, num_workers: int, device: str, pin_memory: bool) -> DataLoader:
     ds = WindowDataset(windows)
+    use_pin_memory = bool(pin_memory and device.startswith("cuda"))
     return DataLoader(
         ds,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
         collate_fn=collate_fn,
-        pin_memory=pin_memory,
+        pin_memory=use_pin_memory,
         persistent_workers=bool(num_workers > 0),
     )
 
 
-def evenly_subsample_windows(windows: List[Dict[str, Any]], max_windows: Optional[int]) -> List[Dict[str, Any]]:
-    if max_windows is None or len(windows) <= max_windows:
-        return windows
-    idx = np.linspace(0, len(windows) - 1, int(max_windows), dtype=int)
-    return [windows[int(i)] for i in idx]
-
-
-def make_windows_for_run(run: Dict[str, Any], window_size: int, stride: int, input_vars: Sequence[str], max_windows_per_run: Optional[int] = None) -> List[Dict[str, Any]]:
+def make_windows_for_run(run: Dict[str, Any], window_size: int, stride: int, input_vars: Sequence[str]) -> List[Dict[str, Any]]:
     n = len(run["e"])
-    out: List[Dict[str, Any]] = []
+    rows: List[Dict[str, Any]] = []
     for start in range(0, n - window_size + 1, stride):
         end = start + window_size
         x = np.stack([run[var][start:end] for var in input_vars], axis=-1)
-        out.append({
+        rows.append({
             "x": x.astype(np.float32),
             "y": int(run["label"]),
             "vehicle_type": run["vehicle_type"],
@@ -576,41 +509,14 @@ def make_windows_for_run(run: Dict[str, Any], window_size: int, stride: int, inp
             "start_idx": start,
             "end_idx": end,
         })
-    return evenly_subsample_windows(out, max_windows_per_run)
+    return rows
 
 
-def build_window_table(runs: Sequence[Dict[str, Any]], window_size: int, input_vars: Sequence[str], stride_fraction: float, max_windows_per_run: Optional[int] = None) -> List[Dict[str, Any]]:
+def build_window_table(runs: Sequence[Dict[str, Any]], window_size: int, input_vars: Sequence[str], stride_fraction: float) -> List[Dict[str, Any]]:
     stride = max(1, int(round(window_size * stride_fraction)))
     all_windows: List[Dict[str, Any]] = []
     for run in runs:
-        all_windows.extend(make_windows_for_run(run, window_size, stride, input_vars, max_windows_per_run=max_windows_per_run))
-    if not all_windows:
-        raise ValueError("No windows could be created. Check min_run_length and window_size.")
-    return all_windows
-
-
-def build_window_cache(runs: Sequence[Dict[str, Any]], candidate_specs: Sequence[Tuple[int, Tuple[str, ...]]], stride_fraction: float, max_windows_per_run: Optional[int]) -> Dict[Tuple[str, int, Tuple[str, ...]], List[Dict[str, Any]]]:
-    cache: Dict[Tuple[str, int, Tuple[str, ...]], List[Dict[str, Any]]] = {}
-    for window_size, input_vars in candidate_specs:
-        stride = max(1, int(round(window_size * stride_fraction)))
-        for run in runs:
-            cache[(str(run["run_id"]), int(window_size), tuple(input_vars))] = make_windows_for_run(
-                run,
-                window_size,
-                stride,
-                input_vars,
-                max_windows_per_run=max_windows_per_run,
-            )
-    return cache
-
-
-def collect_windows(runs: Sequence[Dict[str, Any]], window_size: int, input_vars: Sequence[str], stride_fraction: float, max_windows_per_run: Optional[int], cache: Optional[Dict[Tuple[str, int, Tuple[str, ...]], List[Dict[str, Any]]]] = None) -> List[Dict[str, Any]]:
-    if cache is None:
-        return build_window_table(runs, window_size, input_vars, stride_fraction, max_windows_per_run=max_windows_per_run)
-    all_windows: List[Dict[str, Any]] = []
-    key_vars = tuple(input_vars)
-    for run in runs:
-        all_windows.extend(cache.get((str(run["run_id"]), int(window_size), key_vars), []))
+        all_windows.extend(make_windows_for_run(run, window_size, stride, input_vars))
     if not all_windows:
         raise ValueError("No windows could be created. Check min_run_length and window_size.")
     return all_windows
@@ -630,19 +536,30 @@ def get_leave_one_pilot_out_folds(runs: Sequence[Dict[str, Any]]) -> List[Tuple[
     return [(pilot_id, *split_runs_by_pilot(runs, pilot_id)) for pilot_id in get_unique_pilot_ids(runs)]
 
 
-def train_one_epoch(model: nn.Module, loader: DataLoader, optimizer: torch.optim.Optimizer, criterion: nn.Module, device: str) -> float:
+def train_one_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: str,
+    scaler: GradScaler,
+    use_mixed_precision: bool,
+) -> float:
     model.train()
     total_loss = 0.0
     n = 0
+    use_cuda_amp = bool(use_mixed_precision and device.startswith("cuda"))
+
     for x, y, _ in loader:
-        non_blocking = str(device).startswith("cuda")
-        x = x.to(device, non_blocking=non_blocking)
-        y = y.to(device, non_blocking=non_blocking)
-        optimizer.zero_grad()
-        logits = model(x)
-        loss = criterion(logits, y)
-        loss.backward()
-        optimizer.step()
+        x = x.to(device, non_blocking=True)
+        y = y.to(device, non_blocking=True)
+        optimizer.zero_grad(set_to_none=True)
+        with autocast(enabled=use_cuda_amp):
+            logits = model(x)
+            loss = criterion(logits, y)
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
         bs = x.size(0)
         total_loss += float(loss.item()) * bs
         n += bs
@@ -656,16 +573,17 @@ def predict_loader(model: nn.Module, loader: DataLoader, device: str) -> Tuple[n
     y_pred: List[int] = []
     y_prob: List[float] = []
     metas: List[Dict[str, Any]] = []
+
     for x, y, meta in loader:
-        non_blocking = str(device).startswith("cuda")
-        x = x.to(device, non_blocking=non_blocking)
+        x = x.to(device, non_blocking=True)
         logits = model(x)
-        probs = torch.softmax(logits, dim=1).cpu().numpy()
+        probs = torch.softmax(logits, dim=1).detach().cpu().numpy()
         preds = np.argmax(probs, axis=1)
         y_true.extend(y.numpy().tolist())
         y_pred.extend(preds.tolist())
         y_prob.extend(probs[:, 1].tolist())
         metas.extend(meta)
+
     return np.asarray(y_true, dtype=int), np.asarray(y_pred, dtype=int), np.asarray(y_prob, dtype=float), metas
 
 
@@ -674,7 +592,6 @@ def evaluate_model(model: nn.Module, loader: DataLoader, device: str) -> Dict[st
     return {
         "accuracy": accuracy_score_np(y_true, y_pred),
         "confusion_matrix": confusion_matrix_np(y_true, y_pred, labels=(0, 1)),
-        "classification_report": classification_report_np(y_true, y_pred, labels=(0, 1)),
         "y_true": y_true,
         "y_pred": y_pred,
         "y_prob": y_prob,
@@ -682,7 +599,14 @@ def evaluate_model(model: nn.Module, loader: DataLoader, device: str) -> Dict[st
     }
 
 
-def fit_lstm(train_windows: Sequence[Dict[str, Any]], val_windows: Sequence[Dict[str, Any]], config: TrainConfig, input_size: int, tracker: Optional[ProgressTracker] = None, training_label: str = ""):
+def fit_lstm(
+    train_windows: Sequence[Dict[str, Any]],
+    val_windows: Sequence[Dict[str, Any]],
+    config: TrainConfig,
+    input_size: int,
+    tracker: Optional[ProgressTracker] = None,
+    training_label: str = "",
+):
     model = LSTMClassifier(
         input_size=input_size,
         hidden_size=config.hidden_size,
@@ -692,23 +616,23 @@ def fit_lstm(train_windows: Sequence[Dict[str, Any]], val_windows: Sequence[Dict
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     criterion = nn.CrossEntropyLoss()
-    train_loader = make_loader(train_windows, config.batch_size, True, config.num_workers, pin_memory=bool(config.pin_memory))
-    val_loader = make_loader(val_windows, config.batch_size, False, config.num_workers, pin_memory=bool(config.pin_memory))
+    scaler = GradScaler(enabled=bool(config.use_mixed_precision and str(config.device).startswith("cuda")))
+
+    train_loader = make_loader(train_windows, config.batch_size, True, config.num_workers, config.device, config.pin_memory)
+    val_loader = make_loader(val_windows, config.batch_size, False, config.num_workers, config.device, config.pin_memory)
 
     best_state = copy.deepcopy(model.state_dict())
     best_val_acc = -float("inf")
     best_epoch = 1
-    history: List[Dict[str, Any]] = []
     wait = 0
 
     if tracker is not None:
-        tracker.start_training(training_label or f"train_windows={len(train_windows)} val_windows={len(val_windows)}", config.max_epochs)
+        tracker.start_training(training_label or f"train={len(train_windows)} val={len(val_windows)}", config.max_epochs)
 
     for epoch in range(1, config.max_epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, config.device)
+        _ = train_one_epoch(model, train_loader, optimizer, criterion, config.device, scaler, config.use_mixed_precision)
         val_result = evaluate_model(model, val_loader, config.device)
         val_acc = float(val_result["accuracy"])
-        history.append({"epoch": epoch, "train_loss": train_loss, "val_accuracy": val_acc})
         if tracker is not None:
             tracker.update_epoch(epoch)
 
@@ -724,11 +648,18 @@ def fit_lstm(train_windows: Sequence[Dict[str, Any]], val_windows: Sequence[Dict
 
     model.load_state_dict(best_state)
     if tracker is not None:
-        tracker.finish_training(actual_epochs=history[-1]["epoch"] if history else 0)
-    return model, history, best_epoch, best_val_acc
+        tracker.finish_training(best_epoch)
+    return model, best_epoch, best_val_acc
 
 
-def fit_lstm_fixed_epochs(train_windows: Sequence[Dict[str, Any]], config: TrainConfig, input_size: int, num_epochs: int, tracker: Optional[ProgressTracker] = None, training_label: str = ""):
+def fit_lstm_fixed_epochs(
+    train_windows: Sequence[Dict[str, Any]],
+    config: TrainConfig,
+    input_size: int,
+    num_epochs: int,
+    tracker: Optional[ProgressTracker] = None,
+    training_label: str = "",
+):
     model = LSTMClassifier(
         input_size=input_size,
         hidden_size=config.hidden_size,
@@ -738,25 +669,24 @@ def fit_lstm_fixed_epochs(train_windows: Sequence[Dict[str, Any]], config: Train
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     criterion = nn.CrossEntropyLoss()
-    train_loader = make_loader(train_windows, config.batch_size, True, config.num_workers, pin_memory=bool(config.pin_memory))
-    history: List[Dict[str, Any]] = []
+    scaler = GradScaler(enabled=bool(config.use_mixed_precision and str(config.device).startswith("cuda")))
+    train_loader = make_loader(train_windows, config.batch_size, True, config.num_workers, config.device, config.pin_memory)
 
     planned_epochs = max(1, int(num_epochs))
     if tracker is not None:
-        tracker.start_training(training_label or f"final_train_windows={len(train_windows)}", planned_epochs)
+        tracker.start_training(training_label or f"final train={len(train_windows)}", planned_epochs)
 
     for epoch in range(1, planned_epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, config.device)
-        history.append({"epoch": epoch, "train_loss": train_loss})
+        _ = train_one_epoch(model, train_loader, optimizer, criterion, config.device, scaler, config.use_mixed_precision)
         if tracker is not None:
             tracker.update_epoch(epoch)
 
     if tracker is not None:
-        tracker.finish_training(actual_epochs=planned_epochs)
-    return model, history
+        tracker.finish_training(planned_epochs)
+    return model
 
 
-def build_prediction_rows(eval_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+def build_window_prediction_rows(eval_result: Dict[str, Any]) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for yt, yp, prob, meta in zip(eval_result["y_true"], eval_result["y_pred"], eval_result["y_prob"], eval_result["metas"]):
         rows.append({
@@ -774,96 +704,69 @@ def build_prediction_rows(eval_result: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
-def combine_prediction_rows(prediction_tables: Sequence[List[Dict[str, Any]]]) -> Dict[str, Any]:
-    combined = [row for table in prediction_tables for row in table]
-    if not combined:
-        raise ValueError("No prediction rows to combine.")
-    y_true = np.asarray([row["true_label"] for row in combined], dtype=int)
-    y_pred = np.asarray([row["pred_label"] for row in combined], dtype=int)
-    y_prob = np.asarray([row["motion_on_confidence"] for row in combined], dtype=float)
-    return {
-        "combined_prediction_rows": combined,
-        "accuracy": accuracy_score_np(y_true, y_pred),
-        "confusion_matrix": confusion_matrix_np(y_true, y_pred, labels=(0, 1)),
-        "classification_report": classification_report_np(y_true, y_pred, labels=(0, 1)),
-        "y_true": y_true,
-        "y_pred": y_pred,
-        "y_prob": y_prob,
-    }
-
-
-def aggregate_run_confidence(pred_rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def aggregate_run_predictions(pred_rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     grouped: Dict[Tuple[str, str, str, str, int], List[float]] = defaultdict(list)
     for row in pred_rows:
         key = (
-            row["vehicle_type"],
-            row["pilot_id"],
-            row["repetition_id"],
-            row["run_id"],
+            str(row["vehicle_type"]),
+            str(row["pilot_id"]),
+            str(row["repetition_id"]),
+            str(row["run_id"]),
             int(row["true_label"]),
         )
         grouped[key].append(float(row["motion_on_confidence"]))
 
-    out: List[Dict[str, Any]] = []
+    run_rows: List[Dict[str, Any]] = []
     for (vehicle_type, pilot_id, repetition_id, run_id, true_label), scores in grouped.items():
-        out.append({
+        mean_conf = float(np.mean(scores))
+        pred_label = int(mean_conf >= 0.5)
+        run_rows.append({
             "vehicle_type": vehicle_type,
             "pilot_id": pilot_id,
             "repetition_id": repetition_id,
             "run_id": run_id,
             "true_label": true_label,
-            "mean_motion_on_confidence": float(np.mean(scores)),
+            "pred_label": pred_label,
+            "mean_motion_on_confidence": mean_conf,
             "num_windows": int(len(scores)),
         })
-    return sorted(out, key=lambda r: (r["vehicle_type"], r["pilot_id"], r["repetition_id"], r["run_id"]))
+    run_rows.sort(key=lambda r: (r["vehicle_type"], r["pilot_id"], r["repetition_id"], r["run_id"]))
+    return run_rows
 
 
-def run_basic_statistics(pred_rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    run_rows = aggregate_run_confidence(pred_rows)
-    results: Dict[str, Any] = {"aggregated_run_predictions": run_rows}
+def compute_run_metrics(run_rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    y_true = np.asarray([int(r["true_label"]) for r in run_rows], dtype=int)
+    y_pred = np.asarray([int(r["pred_label"]) for r in run_rows], dtype=int)
+    cm = confusion_matrix_np(y_true, y_pred, labels=(0, 1))
+    correct = int(np.sum(y_true == y_pred))
+    total = int(len(y_true))
+    recall_off = float(cm[0, 0] / max(1, cm[0, 0] + cm[0, 1]))
+    recall_on = float(cm[1, 1] / max(1, cm[1, 0] + cm[1, 1]))
+    return {
+        "accuracy": float(correct / max(1, total)),
+        "correct_runs": correct,
+        "total_runs": total,
+        "confusion_matrix": cm,
+        "recall_no_motion": recall_off,
+        "recall_motion": recall_on,
+    }
 
+
+def run_basic_statistics(run_rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    results: Dict[str, Any] = {"aggregated_run_predictions": list(run_rows)}
     if stats is None:
-        results["note"] = "scipy not installed; inferential statistics skipped"
+        results["note"] = "scipy not installed; significance tests skipped"
         return results
 
     off_scores = np.asarray([r["mean_motion_on_confidence"] for r in run_rows if int(r["true_label"]) == 0], dtype=float)
     on_scores = np.asarray([r["mean_motion_on_confidence"] for r in run_rows if int(r["true_label"]) == 1], dtype=float)
-
     if len(off_scores) >= 2 and len(on_scores) >= 2:
         t_stat, p_val = stats.ttest_ind(off_scores, on_scores, equal_var=False)
-        results["t_test_confidence_off_vs_on"] = {
-            "n_off_runs": int(len(off_scores)),
-            "n_on_runs": int(len(on_scores)),
-            "mean_off": float(np.mean(off_scores)),
-            "mean_on": float(np.mean(on_scores)),
-            "t_statistic": float(t_stat),
+        results["motion_score_difference"] = {
+            "mean_no_motion": float(np.mean(off_scores)),
+            "mean_motion": float(np.mean(on_scores)),
             "p_value": float(p_val),
         }
-
-    by_pilot: Dict[str, List[float]] = defaultdict(list)
-    for row in run_rows:
-        by_pilot[str(row["pilot_id"])].append(float(row["mean_motion_on_confidence"]))
-    pilot_groups = [np.asarray(vals, dtype=float) for vals in by_pilot.values() if len(vals) >= 2]
-    if len(pilot_groups) >= 2:
-        f_stat, p_val = stats.f_oneway(*pilot_groups)
-        results["anova_by_pilot"] = {
-            "num_groups": int(len(pilot_groups)),
-            "f_statistic": float(f_stat),
-            "p_value": float(p_val),
-        }
-
-    by_repetition: Dict[str, List[float]] = defaultdict(list)
-    for row in run_rows:
-        by_repetition[str(row["repetition_id"])].append(float(row["mean_motion_on_confidence"]))
-    repetition_groups = [np.asarray(vals, dtype=float) for vals in by_repetition.values() if len(vals) >= 2]
-    if len(repetition_groups) >= 2:
-        f_stat, p_val = stats.f_oneway(*repetition_groups)
-        results["anova_by_repetition"] = {
-            "num_groups": int(len(repetition_groups)),
-            "f_statistic": float(f_stat),
-            "p_value": float(p_val),
-        }
-
     return results
 
 
@@ -876,13 +779,8 @@ def estimate_total_trainings(runs_by_vehicle: Dict[str, List[Dict[str, Any]]], c
         if len(labels) < 2 or len(pilot_ids) < 3:
             continue
         n_pilots = len(pilot_ids)
-        inner_folds = n_pilots - 1
-        screen_folds = min(max(1, config.screen_num_folds), inner_folds)
-        top_k = min(max(1, config.top_k_candidates), num_candidates)
-        total += n_pilots * (num_candidates * screen_folds + top_k * inner_folds + 1)
+        total += n_pilots * (num_candidates * (n_pilots - 1) + 1)
     return total
-
-
 
 
 def run_inner_cv_hyperparameter_search(
@@ -890,140 +788,80 @@ def run_inner_cv_hyperparameter_search(
     vehicle_type: str,
     config: TrainConfig,
     tracker: Optional[ProgressTracker] = None,
-    window_cache: Optional[Dict[Tuple[str, int, Tuple[str, ...]], List[Dict[str, Any]]]] = None,
 ):
     inner_folds = get_leave_one_pilot_out_folds(train_runs)
     if len(inner_folds) < 2:
-        raise ValueError("Need at least two pilots in the outer-training split for inner CV.")
-
-    all_candidates = [(tuple(input_vars), int(window_size)) for input_vars in config.input_combinations for window_size in config.window_sizes]
-    screen_folds = inner_folds[: min(max(1, config.screen_num_folds), len(inner_folds))]
-
-    screen_config = copy.copy(config)
-    screen_config.max_epochs = min(config.max_epochs, max(1, config.screen_max_epochs))
-    screen_config.patience = min(config.patience, max(1, config.screen_patience))
-
-    screened_rows: List[Dict[str, Any]] = []
-    viable_candidates: List[Tuple[Tuple[str, ...], int]] = []
-
-    for input_vars, window_size in all_candidates:
-        fold_accs: List[float] = []
-        failed = False
-        for val_pilot, inner_train_runs, val_runs in screen_folds:
-            if not inner_train_runs or not val_runs or len({r["label"] for r in inner_train_runs}) < 2:
-                failed = True
-                break
-            try:
-                train_windows = collect_windows(inner_train_runs, window_size, input_vars, config.stride_fraction, config.max_windows_per_run, cache=window_cache)
-                val_windows = collect_windows(val_runs, window_size, input_vars, config.stride_fraction, config.max_windows_per_run, cache=window_cache)
-            except ValueError:
-                failed = True
-                break
-
-            _, _, _, best_val_acc = fit_lstm(
-                train_windows,
-                val_windows,
-                screen_config,
-                input_size=len(input_vars),
-                tracker=tracker,
-                training_label=f"{vehicle_type} | screen | val={val_pilot} | vars={','.join(input_vars)} | w={window_size}",
-            )
-            fold_accs.append(float(best_val_acc))
-
-        if failed or not fold_accs:
-            continue
-
-        viable_candidates.append((input_vars, window_size))
-        screened_rows.append({
-            "vehicle_type": vehicle_type,
-            "input_vars": ",".join(input_vars),
-            "window_size": int(window_size),
-            "screen_mean_accuracy": float(np.mean(fold_accs)),
-            "screen_std_accuracy": float(np.std(fold_accs, ddof=0)),
-            "screen_num_folds": int(len(fold_accs)),
-        })
-
-    if not screened_rows:
-        raise ValueError("Candidate screening failed for all hyperparameter settings.")
-
-    screened_rows = sorted(screened_rows, key=lambda r: (-r["screen_mean_accuracy"], r["screen_std_accuracy"], r["window_size"]))
-    top_k = min(max(1, config.top_k_candidates), len(screened_rows))
-    selected_keys = {(row["input_vars"], int(row["window_size"])) for row in screened_rows[:top_k]}
-    selected_candidates = [(vars_, w) for vars_, w in viable_candidates if (",".join(vars_), int(w)) in selected_keys]
+        raise ValueError("Need at least two pilots in the outer-training split for inner cross-validation.")
 
     summary_rows: List[Dict[str, Any]] = []
-    fold_rows: List[Dict[str, Any]] = []
 
-    for input_vars, window_size in selected_candidates:
-        candidate_fold_rows: List[Dict[str, Any]] = []
-        failed = False
+    for input_vars in config.input_combinations:
+        for window_size in config.window_sizes:
+            candidate_rows: List[Dict[str, Any]] = []
+            failed = False
+            for val_pilot, inner_train_runs, val_runs in inner_folds:
+                if not inner_train_runs or not val_runs:
+                    failed = True
+                    break
+                if len({r["label"] for r in inner_train_runs}) < 2:
+                    failed = True
+                    break
+                try:
+                    train_windows = build_window_table(inner_train_runs, window_size, input_vars, config.stride_fraction)
+                    val_windows = build_window_table(val_runs, window_size, input_vars, config.stride_fraction)
+                except ValueError:
+                    failed = True
+                    break
 
-        for val_pilot, inner_train_runs, val_runs in inner_folds:
-            if not inner_train_runs or not val_runs or len({r["label"] for r in inner_train_runs}) < 2:
-                failed = True
-                break
-            try:
-                train_windows = collect_windows(inner_train_runs, window_size, input_vars, config.stride_fraction, config.max_windows_per_run, cache=window_cache)
-                val_windows = collect_windows(val_runs, window_size, input_vars, config.stride_fraction, config.max_windows_per_run, cache=window_cache)
-            except ValueError:
-                failed = True
-                break
+                _, best_epoch, best_val_acc = fit_lstm(
+                    train_windows,
+                    val_windows,
+                    config,
+                    input_size=len(input_vars),
+                    tracker=tracker,
+                    training_label=f"{vehicle_type} | inner | val={val_pilot} | vars={','.join(input_vars)} | w={window_size}",
+                )
+                candidate_rows.append({
+                    "validation_pilot": val_pilot,
+                    "input_vars": ",".join(input_vars),
+                    "window_size": int(window_size),
+                    "best_epoch": int(best_epoch),
+                    "best_val_accuracy": float(best_val_acc),
+                })
 
-            _, _, best_epoch, best_val_acc = fit_lstm(
-                train_windows,
-                val_windows,
-                config,
-                input_size=len(input_vars),
-                tracker=tracker,
-                training_label=f"{vehicle_type} | inner | val={val_pilot} | vars={','.join(input_vars)} | w={window_size}",
-            )
-            candidate_fold_rows.append({
-                "vehicle_type": vehicle_type,
-                "validation_pilot": val_pilot,
+            if failed or not candidate_rows:
+                continue
+
+            accs = [r["best_val_accuracy"] for r in candidate_rows]
+            epochs = [r["best_epoch"] for r in candidate_rows]
+            summary_rows.append({
                 "input_vars": ",".join(input_vars),
                 "window_size": int(window_size),
-                "best_epoch": int(best_epoch),
-                "best_val_accuracy": float(best_val_acc),
+                "mean_inner_val_accuracy": float(np.mean(accs)),
+                "std_inner_val_accuracy": float(np.std(accs, ddof=0)),
+                "mean_best_epoch": float(np.mean(epochs)),
+                "num_inner_folds": int(len(candidate_rows)),
             })
 
-        if failed or not candidate_fold_rows:
-            continue
-
-        fold_rows.extend(candidate_fold_rows)
-        accs = [row["best_val_accuracy"] for row in candidate_fold_rows]
-        epochs = [row["best_epoch"] for row in candidate_fold_rows]
-        summary_rows.append({
-            "vehicle_type": vehicle_type,
-            "input_vars": ",".join(input_vars),
-            "window_size": int(window_size),
-            "mean_inner_val_accuracy": float(np.mean(accs)),
-            "std_inner_val_accuracy": float(np.std(accs, ddof=0)),
-            "mean_best_epoch": float(np.mean(epochs)),
-            "num_inner_folds": int(len(candidate_fold_rows)),
-            "screen_mean_accuracy": float(next(r["screen_mean_accuracy"] for r in screened_rows if r["input_vars"] == ",".join(input_vars) and int(r["window_size"]) == int(window_size))),
-        })
-
     if not summary_rows:
-        raise ValueError("Inner CV could not evaluate any shortlisted hyperparameter settings.")
+        raise ValueError("Inner cross-validation could not evaluate any hyperparameter settings.")
 
-    summary_rows = sorted(summary_rows, key=lambda r: (-r["mean_inner_val_accuracy"], r["std_inner_val_accuracy"], r["window_size"]))
-    best_row = summary_rows[0]
-    return best_row, summary_rows, fold_rows, screened_rows
+    summary_rows.sort(key=lambda r: (-r["mean_inner_val_accuracy"], r["std_inner_val_accuracy"], r["window_size"]))
+    return summary_rows[0]
 
 
-def run_vehicle_experiment(runs_for_vehicle: Sequence[Dict[str, Any]], vehicle_type: str, config: TrainConfig, tracker: Optional[ProgressTracker] = None) -> Dict[str, Any]:
+def run_vehicle_experiment(
+    runs_for_vehicle: Sequence[Dict[str, Any]],
+    vehicle_type: str,
+    config: TrainConfig,
+    tracker: Optional[ProgressTracker] = None,
+) -> Dict[str, Any]:
     pilot_ids = get_unique_pilot_ids(runs_for_vehicle)
     if len(pilot_ids) < 3:
         raise ValueError(f"Vehicle {vehicle_type}: need at least three pilots for nested cross-validation.")
 
-    prediction_tables: List[List[Dict[str, Any]]] = []
+    all_window_pred_rows: List[Dict[str, Any]] = []
     outer_fold_rows: List[Dict[str, Any]] = []
-    inner_search_rows: List[Dict[str, Any]] = []
-    inner_fold_rows: List[Dict[str, Any]] = []
-    screening_rows: List[Dict[str, Any]] = []
-
-    candidate_specs = [(int(window_size), tuple(input_vars)) for input_vars in config.input_combinations for window_size in config.window_sizes]
-    window_cache = build_window_cache(runs_for_vehicle, candidate_specs, config.stride_fraction, config.max_windows_per_run) if config.precompute_windows else None
 
     for test_pilot, outer_train_runs, test_runs in get_leave_one_pilot_out_folds(runs_for_vehicle):
         if not outer_train_runs or not test_runs:
@@ -1032,103 +870,81 @@ def run_vehicle_experiment(runs_for_vehicle: Sequence[Dict[str, Any]], vehicle_t
             print(f"Skipping {vehicle_type} / {test_pilot}: outer training split has only one class")
             continue
 
-        print(f"\nVehicle {vehicle_type}: outer fold test pilot = {test_pilot}")
-        best_row, inner_search, inner_folds, fold_screening = run_inner_cv_hyperparameter_search(
-            outer_train_runs,
-            vehicle_type,
-            config,
-            tracker=tracker,
-            window_cache=window_cache,
-        )
-        best_input_vars = tuple(str(best_row["input_vars"]).split(","))
-        best_window_size = int(best_row["window_size"])
-        selected_num_epochs = max(1, int(round(float(best_row["mean_best_epoch"]))))
+        print(f"\nVehicle {vehicle_type}: held-out test pilot = {test_pilot}")
+        best = run_inner_cv_hyperparameter_search(outer_train_runs, vehicle_type, config, tracker)
+        best_input_vars = tuple(str(best["input_vars"]).split(","))
+        best_window_size = int(best["window_size"])
+        selected_num_epochs = max(1, int(round(float(best["mean_best_epoch"]))))
 
-        train_windows = collect_windows(outer_train_runs, best_window_size, best_input_vars, config.stride_fraction, config.max_windows_per_run, cache=window_cache)
-        test_windows = collect_windows(test_runs, best_window_size, best_input_vars, config.stride_fraction, config.max_windows_per_run, cache=window_cache)
-        final_model, _ = fit_lstm_fixed_epochs(
+        train_windows = build_window_table(outer_train_runs, best_window_size, best_input_vars, config.stride_fraction)
+        test_windows = build_window_table(test_runs, best_window_size, best_input_vars, config.stride_fraction)
+
+        final_model = fit_lstm_fixed_epochs(
             train_windows,
             config,
             input_size=len(best_input_vars),
             num_epochs=selected_num_epochs,
             tracker=tracker,
-            training_label=f"{vehicle_type} | outer-final | test={test_pilot} | vars={','.join(best_input_vars)} | w={best_window_size}",
+            training_label=f"{vehicle_type} | final | test={test_pilot} | vars={','.join(best_input_vars)} | w={best_window_size}",
         )
-        test_loader = make_loader(test_windows, config.batch_size, False, config.num_workers, pin_memory=bool(config.pin_memory))
+        test_loader = make_loader(test_windows, config.batch_size, False, config.num_workers, config.device, config.pin_memory)
         test_result = evaluate_model(final_model, test_loader, config.device)
+        fold_window_rows = build_window_prediction_rows(test_result)
+        fold_run_rows = aggregate_run_predictions(fold_window_rows)
+        fold_metrics = compute_run_metrics(fold_run_rows)
 
-        pred_rows = build_prediction_rows(test_result)
-        for row in pred_rows:
+        for row in fold_window_rows:
             row["outer_test_pilot"] = test_pilot
             row["selected_input_vars"] = ",".join(best_input_vars)
             row["selected_window_size"] = best_window_size
             row["selected_num_epochs"] = selected_num_epochs
-        prediction_tables.append(pred_rows)
+            all_window_pred_rows.append(row)
 
         outer_fold_rows.append({
-            "vehicle_type": vehicle_type,
-            "outer_test_pilot": test_pilot,
-            "selected_input_vars": ",".join(best_input_vars),
-            "selected_window_size": best_window_size,
-            "selected_num_epochs": selected_num_epochs,
-            "num_test_runs": int(len(test_runs)),
-            "num_test_windows": int(len(pred_rows)),
-            "test_accuracy": float(test_result["accuracy"]),
+            "held_out_pilot": test_pilot,
+            "best_inputs": ", ".join(best_input_vars),
+            "best_window_size": best_window_size,
+            "training_epochs": selected_num_epochs,
+            "correct_runs": int(fold_metrics["correct_runs"]),
+            "total_runs": int(fold_metrics["total_runs"]),
+            "run_accuracy": float(fold_metrics["accuracy"]),
         })
 
-        for row in inner_search:
-            x = dict(row)
-            x["outer_test_pilot"] = test_pilot
-            inner_search_rows.append(x)
-        for row in inner_folds:
-            x = dict(row)
-            x["outer_test_pilot"] = test_pilot
-            inner_fold_rows.append(x)
-        for row in fold_screening:
-            x = dict(row)
-            x["outer_test_pilot"] = test_pilot
-            screening_rows.append(x)
-
-    if not prediction_tables:
+    if not all_window_pred_rows:
         raise ValueError(f"No valid outer folds were completed for vehicle {vehicle_type}.")
 
-    combined = combine_prediction_rows(prediction_tables)
-    prediction_rows = combined.pop("combined_prediction_rows")
-    statistics = run_basic_statistics(prediction_rows)
+    run_rows = aggregate_run_predictions(all_window_pred_rows)
+    run_metrics = compute_run_metrics(run_rows)
+    statistics = run_basic_statistics(run_rows)
 
     return {
         "vehicle_type": vehicle_type,
-        "search_rows": inner_search_rows,
-        "screening_rows": screening_rows,
-        "inner_fold_rows": inner_fold_rows,
+        "vehicle_name": VEHICLE_NAMES.get(vehicle_type, vehicle_type),
         "outer_fold_rows": outer_fold_rows,
-        "test_result": combined,
-        "prediction_rows": prediction_rows,
+        "run_rows": run_rows,
+        "window_rows": all_window_pred_rows,
+        "summary_metrics": run_metrics,
         "statistics": statistics,
-        "num_outer_folds": int(len(outer_fold_rows)),
     }
 
 
 def write_csv(path: Path, rows: Sequence[Dict[str, Any]], fieldnames: Optional[Sequence[str]] = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not rows:
-        if fieldnames is None:
-            path.write_text("", encoding="utf-8")
-            return
         with path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=list(fieldnames))
-            writer.writeheader()
+            if fieldnames is not None:
+                writer = csv.DictWriter(f, fieldnames=list(fieldnames))
+                writer.writeheader()
         return
 
     if fieldnames is None:
-        keys: List[str] = []
-        seen: set[str] = set()
+        fieldnames = []
+        seen = set()
         for row in rows:
             for key in row.keys():
                 if key not in seen:
                     seen.add(key)
-                    keys.append(key)
-        fieldnames = keys
+                    fieldnames.append(key)
 
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(fieldnames))
@@ -1137,99 +953,251 @@ def write_csv(path: Path, rows: Sequence[Dict[str, Any]], fieldnames: Optional[S
             writer.writerow(row)
 
 
+def format_pct(value: float) -> str:
+    return f"{100.0 * float(value):.1f}%"
+
+
+def format_simple_table(rows: Sequence[Dict[str, Any]], columns: Sequence[Tuple[str, str]]) -> str:
+    headers = [title for _, title in columns]
+    widths = [len(h) for h in headers]
+    data_rows: List[List[str]] = []
+    for row in rows:
+        rendered = [str(row.get(key, "")) for key, _ in columns]
+        data_rows.append(rendered)
+        widths = [max(w, len(cell)) for w, cell in zip(widths, rendered)]
+
+    def render_line(values: Sequence[str]) -> str:
+        return " | ".join(v.ljust(w) for v, w in zip(values, widths))
+
+    sep = "-+-".join("-" * w for w in widths)
+    out = [render_line(headers), sep]
+    out.extend(render_line(r) for r in data_rows)
+    return "\n".join(out)
+
+
+def print_dataset_summary(runs: Sequence[Dict[str, Any]]) -> None:
+    total_runs = len(runs)
+    pilots = sorted({str(r["pilot_id"]) for r in runs})
+    by_vehicle = Counter(str(r["vehicle_type"]) for r in runs)
+    print("=" * 88)
+    print("DATASET OVERVIEW")
+    print(f"Valid runs : {total_runs}")
+    print(f"Pilots     : {', '.join(pilots)}")
+    print(f"Vehicles   : {', '.join(f'{VEHICLE_NAMES.get(v, v)} ({by_vehicle[v]} runs)' for v in sorted(by_vehicle))}")
+
+    rows = []
+    for vehicle in sorted(by_vehicle):
+        vruns = [r for r in runs if str(r["vehicle_type"]) == vehicle]
+        label_counts = Counter(int(r["label"]) for r in vruns)
+        rows.append({
+            "vehicle": VEHICLE_NAMES.get(vehicle, vehicle),
+            "runs": len(vruns),
+            "no_motion": int(label_counts.get(0, 0)),
+            "motion": int(label_counts.get(1, 0)),
+        })
+    print(format_simple_table(rows, [("vehicle", "Vehicle"), ("runs", "Runs"), ("no_motion", "No motion"), ("motion", "Motion")]))
+    print("=" * 88)
+
+
+def print_vehicle_summary(result: Dict[str, Any]) -> None:
+    metrics = result["summary_metrics"]
+    cm = metrics["confusion_matrix"]
+    print("=" * 88)
+    print(f"RESULTS FOR {result['vehicle_name']}")
+    print(f"Run-level accuracy: {format_pct(metrics['accuracy'])} ({metrics['correct_runs']}/{metrics['total_runs']} correct runs)")
+    print(f"No-motion detection: {format_pct(metrics['recall_no_motion'])}")
+    print(f"Motion detection   : {format_pct(metrics['recall_motion'])}")
+    print("Confusion matrix (run level)")
+    print(format_simple_table([
+        {"true": "No motion", "pred_no": int(cm[0, 0]), "pred_yes": int(cm[0, 1])},
+        {"true": "Motion", "pred_no": int(cm[1, 0]), "pred_yes": int(cm[1, 1])},
+    ], [("true", "Actual"), ("pred_no", "Predicted no motion"), ("pred_yes", "Predicted motion")]))
+
+    fold_rows = []
+    for row in result["outer_fold_rows"]:
+        fold_rows.append({
+            "pilot": row["held_out_pilot"],
+            "accuracy": format_pct(row["run_accuracy"]),
+            "inputs": row["best_inputs"],
+            "window": row["best_window_size"],
+        })
+    print("Held-out pilot results")
+    print(format_simple_table(fold_rows, [("pilot", "Pilot"), ("accuracy", "Accuracy"), ("inputs", "Best inputs"), ("window", "Window")]))
+
+    stat = result["statistics"].get("motion_score_difference")
+    if stat is not None:
+        print(
+            f"Average motion score: no motion = {stat['mean_no_motion']:.3f}, motion = {stat['mean_motion']:.3f}, "
+            f"p-value = {stat['p_value']:.4g}"
+        )
+    print("=" * 88)
+
+
+def save_confusion_matrix_plot(cm: np.ndarray, title: str, path: Path) -> None:
+    if plt is None:
+        return
+    fig, ax = plt.subplots(figsize=(5, 4))
+    im = ax.imshow(cm)
+    ax.set_xticks([0, 1], ["Predicted\nNo motion", "Predicted\nMotion"])
+    ax.set_yticks([0, 1], ["Actual\nNo motion", "Actual\nMotion"])
+    ax.set_title(title)
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(j, i, str(int(cm[i, j])), ha="center", va="center")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_fold_accuracy_plot(rows: Sequence[Dict[str, Any]], title: str, path: Path) -> None:
+    if plt is None or not rows:
+        return
+    labels = [str(r["held_out_pilot"]) for r in rows]
+    values = [100.0 * float(r["run_accuracy"]) for r in rows]
+    fig, ax = plt.subplots(figsize=(7, 4))
+    bars = ax.bar(labels, values)
+    ax.set_ylim(0, 100)
+    ax.set_ylabel("Accuracy (%)")
+    ax.set_title(title)
+    for bar, value in zip(bars, values):
+        ax.text(bar.get_x() + bar.get_width() / 2, value + 1, f"{value:.1f}%", ha="center", va="bottom")
+    fig.tight_layout()
+    fig.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_motion_score_plot(run_rows: Sequence[Dict[str, Any]], title: str, path: Path) -> None:
+    if plt is None or not run_rows:
+        return
+    no_motion = [float(r["mean_motion_on_confidence"]) for r in run_rows if int(r["true_label"]) == 0]
+    motion = [float(r["mean_motion_on_confidence"]) for r in run_rows if int(r["true_label"]) == 1]
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.boxplot([no_motion, motion], labels=["Actual no motion", "Actual motion"])
+    ax.set_ylabel("Average motion score")
+    ax.set_ylim(0, 1)
+    ax.set_title(title)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_overall_accuracy_plot(rows: Sequence[Dict[str, Any]], path: Path) -> None:
+    if plt is None or not rows:
+        return
+    labels = [str(r["vehicle_name"]) for r in rows]
+    values = [100.0 * float(r["run_accuracy"]) for r in rows]
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    bars = ax.bar(labels, values)
+    ax.set_ylim(0, 100)
+    ax.set_ylabel("Accuracy (%)")
+    ax.set_title("Final accuracy by vehicle type")
+    for bar, value in zip(bars, values):
+        ax.text(bar.get_x() + bar.get_width() / 2, value + 1, f"{value:.1f}%", ha="center", va="bottom")
+    fig.tight_layout()
+    fig.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
 def save_vehicle_results(result: Dict[str, Any], save_dir: str | Path) -> None:
     vehicle_dir = Path(save_dir) / str(result["vehicle_type"])
     vehicle_dir.mkdir(parents=True, exist_ok=True)
 
-    write_csv(vehicle_dir / "screening_scores.csv", result.get("screening_rows", []))
-    write_csv(vehicle_dir / "inner_cv_search.csv", result["search_rows"])
-    write_csv(vehicle_dir / "inner_cv_fold_scores.csv", result["inner_fold_rows"])
-    write_csv(vehicle_dir / "outer_cv_fold_scores.csv", result["outer_fold_rows"])
-    write_csv(vehicle_dir / "window_predictions.csv", result["prediction_rows"])
-    write_csv(vehicle_dir / "run_level_confidence.csv", result["statistics"].get("aggregated_run_predictions", []))
+    run_rows_to_save = []
+    for row in result["run_rows"]:
+        x = dict(row)
+        x["true_class"] = LABEL_NAMES[int(x["true_label"])]
+        x["predicted_class"] = LABEL_NAMES[int(x["pred_label"])]
+        run_rows_to_save.append(x)
 
-    cm = result["test_result"]["confusion_matrix"]
+    write_csv(vehicle_dir / "pilot_results.csv", result["outer_fold_rows"])
+    write_csv(vehicle_dir / "run_predictions.csv", run_rows_to_save)
+
+    cm = result["summary_metrics"]["confusion_matrix"]
     cm_rows = [
-        {"": "true_off", "pred_off": int(cm[0, 0]), "pred_on": int(cm[0, 1])},
-        {"": "true_on", "pred_off": int(cm[1, 0]), "pred_on": int(cm[1, 1])},
+        {"actual": "No motion", "predicted_no_motion": int(cm[0, 0]), "predicted_motion": int(cm[0, 1])},
+        {"actual": "Motion", "predicted_no_motion": int(cm[1, 0]), "predicted_motion": int(cm[1, 1])},
     ]
-    write_csv(vehicle_dir / "confusion_matrix.csv", cm_rows, fieldnames=["", "pred_off", "pred_on"])
+    write_csv(vehicle_dir / "confusion_matrix.csv", cm_rows)
 
+    save_confusion_matrix_plot(cm, f"{result['vehicle_name']} - confusion matrix", vehicle_dir / "confusion_matrix.png")
+    save_fold_accuracy_plot(result["outer_fold_rows"], f"{result['vehicle_name']} - held-out pilot accuracy", vehicle_dir / "pilot_accuracy.png")
+    save_motion_score_plot(result["run_rows"], f"{result['vehicle_name']} - average motion score per run", vehicle_dir / "motion_score_boxplot.png")
+
+    metrics = result["summary_metrics"]
     summary_payload = {
         "vehicle_type": result["vehicle_type"],
-        "num_outer_folds": result["num_outer_folds"],
-        "accuracy": result["test_result"]["accuracy"],
-        "confusion_matrix": result["test_result"]["confusion_matrix"].tolist(),
-        "classification_report": result["test_result"]["classification_report"],
+        "vehicle_name": result["vehicle_name"],
+        "run_accuracy": metrics["accuracy"],
+        "correct_runs": metrics["correct_runs"],
+        "total_runs": metrics["total_runs"],
+        "recall_no_motion": metrics["recall_no_motion"],
+        "recall_motion": metrics["recall_motion"],
         "statistics": {k: v for k, v in result["statistics"].items() if k != "aggregated_run_predictions"},
     }
     (vehicle_dir / "summary.json").write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
 
+    stat = result["statistics"].get("motion_score_difference")
     with (vehicle_dir / "summary.txt").open("w", encoding="utf-8") as f:
-        f.write(f"Vehicle type: {result['vehicle_type']}\n")
-        f.write(f"Outer folds (held-out pilots): {result['num_outer_folds']}\n")
-        f.write(f"Overall cross-validated accuracy: {result['test_result']['accuracy']:.4f}\n")
-        f.write(f"Confusion matrix:\n{result['test_result']['confusion_matrix']}\n\n")
-        f.write("Statistics:\n")
-        for key, value in result["statistics"].items():
-            if key == "aggregated_run_predictions":
-                f.write("  aggregated_run_predictions: saved to run_level_confidence.csv\n")
-            else:
-                f.write(f"  {key}: {value}\n")
+        f.write(f"Vehicle type: {result['vehicle_name']}\n")
+        f.write(f"Run-level accuracy: {format_pct(metrics['accuracy'])} ({metrics['correct_runs']}/{metrics['total_runs']} correct runs)\n")
+        f.write(f"No-motion detection: {format_pct(metrics['recall_no_motion'])}\n")
+        f.write(f"Motion detection: {format_pct(metrics['recall_motion'])}\n")
+        if stat is not None:
+            f.write(
+                f"Average motion score: no motion = {stat['mean_no_motion']:.3f}, "
+                f"motion = {stat['mean_motion']:.3f}, p-value = {stat['p_value']:.4g}\n"
+            )
+        f.write("\nFiles in this folder:\n")
+        f.write("- summary.txt: short explanation\n")
+        f.write("- pilot_results.csv: accuracy per held-out pilot\n")
+        f.write("- run_predictions.csv: one row per run\n")
+        f.write("- confusion_matrix.csv and confusion_matrix.png\n")
+        f.write("- pilot_accuracy.png\n")
+        f.write("- motion_score_boxplot.png\n")
 
 
-def print_dataset_summary(runs: Sequence[Dict[str, Any]]) -> None:
-    print("=" * 80)
-    print("Dataset summary")
-    print(f"Total valid runs: {len(runs)}")
-    pilots = sorted({str(r['pilot_id']) for r in runs})
-    print(f"Pilots: {', '.join(pilots)}")
+def save_overall_results(all_results: Dict[str, Any], save_dir: str | Path) -> None:
+    save_dir = Path(save_dir)
+    rows = []
+    for vehicle_type in sorted(all_results):
+        result = all_results[vehicle_type]
+        metrics = result["summary_metrics"]
+        rows.append({
+            "vehicle_type": vehicle_type,
+            "vehicle_name": result["vehicle_name"],
+            "run_accuracy": float(metrics["accuracy"]),
+            "correct_runs": int(metrics["correct_runs"]),
+            "total_runs": int(metrics["total_runs"]),
+            "recall_no_motion": float(metrics["recall_no_motion"]),
+            "recall_motion": float(metrics["recall_motion"]),
+        })
+    write_csv(save_dir / "overall_results.csv", rows)
+    save_overall_accuracy_plot(rows, save_dir / "overall_accuracy.png")
 
-    by_vehicle = Counter(str(r["vehicle_type"]) for r in runs)
-    by_label = Counter(int(r["label"]) for r in runs)
-    print(f"Runs by vehicle: {dict(by_vehicle)}")
-    print(f"Runs by label  : {dict(by_label)}")
-
-    for vehicle in sorted(by_vehicle.keys()):
-        vruns = [r for r in runs if str(r["vehicle_type"]) == vehicle]
-        label_counts = Counter(int(r["label"]) for r in vruns)
-        pilot_counts = Counter(str(r["pilot_id"]) for r in vruns)
-        print(f"  Vehicle {vehicle}: {len(vruns)} runs, labels={dict(label_counts)}, pilots={dict(pilot_counts)}")
-    print("=" * 80)
-
-
-def print_summary(result: Dict[str, Any]) -> None:
-    print("=" * 80)
-    print(f"Vehicle type            : {result['vehicle_type']}")
-    print(f"Outer CV folds (pilots) : {result['num_outer_folds']}")
-    print(f"Overall CV accuracy     : {result['test_result']['accuracy']:.4f}")
-    print("Confusion matrix:")
-    print(result["test_result"]["confusion_matrix"])
-    if result["outer_fold_rows"]:
-        print("Outer-fold selections:")
-        for row in result["outer_fold_rows"]:
-            print(row)
-    print("Statistics:")
-    for key, value in result["statistics"].items():
-        if key == "aggregated_run_predictions":
-            print("  aggregated_run_predictions: saved to CSV")
-        else:
-            print(f"  {key}: {value}")
+    human_lines = ["OVERALL RESULTS", ""]
+    for row in rows:
+        human_lines.append(
+            f"{row['vehicle_name']}: accuracy {format_pct(row['run_accuracy'])} "
+            f"({row['correct_runs']}/{row['total_runs']} correct runs)"
+        )
+    (save_dir / "overall_results.txt").write_text("\n".join(human_lines), encoding="utf-8")
 
 
 def main(config: TrainConfig) -> Dict[str, Any]:
-    configure_runtime(config)
     set_seed(config.random_state)
     script_dir = Path(__file__).resolve().parent
     data_dir = resolve_data_dir(config, script_dir)
     save_dir = resolve_save_dir(config, script_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Using data directory: {data_dir}")
-    print(f"Saving results to   : {save_dir}")
-    print(f"Compute device      : {config.device}")
-    if str(config.device).startswith("cuda"):
-        print(f"CUDA device         : {torch.cuda.get_device_name(0)}")
+    config.device = resolve_device(config)
+    print(f"Using data directory : {data_dir}")
+    print(f"Saving results to    : {save_dir}")
+    print(f"Using compute device : {config.device}")
+    if config.device.startswith("cuda"):
+        print(f"GPU name             : {torch.cuda.get_device_name(0)}")
+    print()
 
     runs = load_runs_from_npz_dir(data_dir, config=config, min_run_length=config.min_run_length)
     print_dataset_summary(runs)
@@ -1239,60 +1207,61 @@ def main(config: TrainConfig) -> Dict[str, Any]:
         runs_by_vehicle[str(run["vehicle_type"])].append(run)
 
     total_trainings = estimate_total_trainings(runs_by_vehicle, config)
-    print(f"Estimated total model trainings: {total_trainings}")
+    print(f"Estimated total model fits: {total_trainings}")
     tracker = ProgressTracker(total_trainings=total_trainings)
 
     all_results: Dict[str, Any] = {}
-    for vehicle_type in sorted(runs_by_vehicle.keys()):
+    for vehicle_type in sorted(runs_by_vehicle):
         vehicle_runs = runs_by_vehicle[vehicle_type]
         labels = {int(r["label"]) for r in vehicle_runs}
         pilot_ids = get_unique_pilot_ids(vehicle_runs)
-
         if len(labels) < 2:
-            print(f"Skipping {vehicle_type}: only one class present")
+            print(f"Skipping {vehicle_type}: only one class is present")
             continue
         if len(pilot_ids) < 3:
-            print(f"Skipping {vehicle_type}: need at least three pilots")
+            print(f"Skipping {vehicle_type}: at least three pilots are required")
             continue
 
-        result = run_vehicle_experiment(vehicle_runs, vehicle_type, config, tracker=tracker)
+        result = run_vehicle_experiment(vehicle_runs, vehicle_type, config, tracker)
         all_results[vehicle_type] = result
         save_vehicle_results(result, save_dir)
-        print_summary(result)
+        print_vehicle_summary(result)
 
     if not all_results:
         print("No vehicle experiments completed. Check min_run_length and dataset coverage.")
+        return {}
+
+    save_overall_results(all_results, save_dir)
+    print(f"All summary files saved in: {save_dir}")
     return all_results
 
 
 if __name__ == "__main__":
     base_dir = Path(__file__).resolve().parent
     config = TrainConfig(
-        data_dir=Path(r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\data\\python_data"),
-        save_dir=Path(r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\results_lstm"),
-        window_sizes=(64, 96),
-        stride_fraction=1.0,
+        data_dir=base_dir / "data" / "python_data",
+        save_dir=base_dir / "results_lstm",
+        window_sizes=(32, 64, 96, 128),
+        stride_fraction=0.5,
         input_combinations=(
             ("e", "u"),
+            ("e", "u", "de"),
+            ("e", "u", "du"),
             ("e", "u", "de", "du"),
         ),
         batch_size=256,
-        hidden_size=32,
-        num_layers=1,
+        hidden_size=64,
+        num_layers=2,
         dropout=0.2,
         learning_rate=1e-3,
         weight_decay=1e-4,
-        max_epochs=20,
-        patience=4,
-        screen_max_epochs=6,
-        screen_patience=2,
-        screen_num_folds=2,
-        top_k_candidates=1,
-        max_windows_per_run=24,
-        precompute_windows=True,
+        max_epochs=40,
+        patience=7,
         random_state=42,
         min_run_length=128,
         num_workers=0,
         device="cuda",
+        use_mixed_precision=True,
+        pin_memory=True,
     )
     main(config)
