@@ -47,6 +47,7 @@ import csv
 import json
 import os
 import re
+import sys
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -103,6 +104,8 @@ class TrainConfig:
     pin_memory: bool = True
     persistent_workers: bool = True
     prefetch_factor: int = 4
+    heartbeat_seconds: float = 10.0
+    batch_update_interval: int = 50
 
     prefer_cuda: bool = True
     use_amp: bool = True
@@ -135,32 +138,56 @@ class TrainConfig:
 
 
 class ProgressTracker:
-    def __init__(self, total_trainings: int):
+    def __init__(self, total_trainings: int, heartbeat_seconds: float = 10.0):
         self.total_trainings = max(1, int(total_trainings))
         self.completed_trainings = 0
         self.start_time = time.time()
         self.current_label = ""
         self.current_planned_epochs = 1
         self.current_epoch = 0
+        self.current_batch = 0
+        self.current_total_batches = 1
+        self.heartbeat_seconds = max(1.0, float(heartbeat_seconds))
+        self.last_print_time = 0.0
 
     def start_training(self, label: str, planned_epochs: int) -> None:
         self.current_label = label
         self.current_planned_epochs = max(1, int(planned_epochs))
         self.current_epoch = 0
+        self.current_batch = 0
+        self.current_total_batches = 1
+        self.last_print_time = 0.0
         self._print_status("START", newline=True)
 
-    def update_epoch(self, epoch: int) -> None:
-        self.current_epoch = max(0, int(epoch))
-        self._print_status("RUN", newline=False)
+    def start_epoch(self, epoch: int, total_batches: int) -> None:
+        self.current_epoch = max(1, int(epoch))
+        self.current_batch = 0
+        self.current_total_batches = max(1, int(total_batches))
+        self._maybe_print("RUN", force=True)
+
+    def update_batch(self, batch_idx: int, total_batches: int) -> None:
+        self.current_batch = max(0, int(batch_idx))
+        self.current_total_batches = max(1, int(total_batches))
+        self._maybe_print("RUN", force=False)
+
+    def finish_epoch(self, epoch: int) -> None:
+        self.current_epoch = max(1, int(epoch))
+        self.current_batch = self.current_total_batches
+        self._print_status("RUN", newline=True)
 
     def finish_training(self, actual_epochs: int) -> None:
         self.current_epoch = max(0, int(actual_epochs))
+        self.current_batch = self.current_total_batches
         self.completed_trainings += 1
         self._print_status("DONE", newline=True)
 
     def _fraction_complete(self) -> float:
-        current_fraction = min(1.0, self.current_epoch / max(1, self.current_planned_epochs))
-        return min(1.0, (self.completed_trainings + current_fraction) / self.total_trainings)
+        batch_fraction = min(1.0, self.current_batch / max(1, self.current_total_batches))
+        epoch_fraction = 0.0
+        if self.current_planned_epochs > 0 and self.current_epoch > 0:
+            epoch_fraction = ((self.current_epoch - 1) + batch_fraction) / self.current_planned_epochs
+        epoch_fraction = min(1.0, max(0.0, epoch_fraction))
+        return min(1.0, (self.completed_trainings + epoch_fraction) / self.total_trainings)
 
     @staticmethod
     def _format_seconds(seconds: float) -> str:
@@ -178,6 +205,7 @@ class ProgressTracker:
         return (
             f"[{prefix}] training {min(self.completed_trainings + 1, self.total_trainings)}/{self.total_trainings} | "
             f"overall {frac * 100:6.2f}% | epoch {self.current_epoch}/{self.current_planned_epochs} | "
+            f"batch {self.current_batch}/{self.current_total_batches} | "
             f"elapsed {self._format_seconds(elapsed)} | ETA {self._format_seconds(eta)} | "
             f"{self.current_label}"
         )
@@ -185,9 +213,15 @@ class ProgressTracker:
     def _print_status(self, prefix: str, newline: bool) -> None:
         msg = self._status_message(prefix)
         if newline:
-            print(msg)
+            print(msg, flush=True)
         else:
             print(msg, end="\r", flush=True)
+        self.last_print_time = time.time()
+
+    def _maybe_print(self, prefix: str, force: bool = False) -> None:
+        now = time.time()
+        if force or (now - self.last_print_time >= self.heartbeat_seconds):
+            self._print_status(prefix, newline=True)
 
 
 def set_seed(seed: int) -> None:
@@ -222,8 +256,22 @@ def configure_torch(config: TrainConfig) -> torch.device:
     return device
 
 
+def running_in_notebook() -> bool:
+    try:
+        from IPython import get_ipython  # type: ignore
+        shell = get_ipython()
+        if shell is None:
+            return False
+        return shell.__class__.__name__ in {"ZMQInteractiveShell", "TerminalInteractiveShell"} or "ipykernel" in sys.modules
+    except Exception:
+        return "ipykernel" in sys.modules
+
+
 def sanitize_runtime_config(config: TrainConfig, device: torch.device) -> TrainConfig:
     cfg = copy.deepcopy(config)
+    interactive = running_in_notebook()
+    windows_platform = sys.platform.startswith("win")
+
     if device.type != "cuda":
         cfg.use_amp = False
         cfg.pin_memory = False
@@ -235,12 +283,20 @@ def sanitize_runtime_config(config: TrainConfig, device: torch.device) -> TrainC
 
     if cfg.num_workers < 0:
         cfg.num_workers = 0
+
     cpu_count = os.cpu_count() or 4
     if cfg.num_workers == 0:
         cfg.num_workers = min(8, max(2, cpu_count // 2))
-    cfg.pin_memory = True
-    if cfg.num_workers == 0:
+
+    if interactive and windows_platform:
+        cfg.num_workers = 0
         cfg.persistent_workers = False
+        cfg.prefetch_factor = 2
+    else:
+        cfg.pin_memory = True
+        if cfg.num_workers == 0:
+            cfg.persistent_workers = False
+
     if cfg.eval_batch_size < cfg.batch_size:
         cfg.eval_batch_size = cfg.batch_size * 2
     return cfg
@@ -689,14 +745,17 @@ def train_one_epoch(
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
     device: torch.device,
-    scaler: Optional[torch.cuda.amp.GradScaler],
+    scaler: Optional[Any],
     use_amp: bool,
+    tracker: Optional[ProgressTracker] = None,
+    batch_update_interval: int = 50,
 ) -> float:
     model.train()
     total_loss = 0.0
     total_n = 0
 
-    for x, y, _ in loader:
+    total_batches = len(loader)
+    for batch_idx, (x, y, _) in enumerate(loader, start=1):
         if device.type == "cuda":
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
@@ -723,6 +782,9 @@ def train_one_epoch(
         bs = int(x.size(0))
         total_loss += float(loss.item()) * bs
         total_n += bs
+
+        if tracker is not None and (batch_idx == 1 or batch_idx == total_batches or batch_idx % max(1, int(batch_update_interval)) == 0):
+            tracker.update_batch(batch_idx, total_batches)
 
     return total_loss / max(1, total_n)
 
@@ -802,7 +864,7 @@ def fit_lstm(
     model = build_model(config, input_size=len(input_vars), device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     criterion = nn.CrossEntropyLoss()
-    scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda" and config.use_amp))
+    scaler = torch.amp.GradScaler("cuda", enabled=config.use_amp) if device.type == "cuda" else None
 
     train_loader = make_loader(train_rows, run_lookup, input_vars, config.batch_size, True, config, device)
     val_loader = make_loader(val_rows, run_lookup, input_vars, config.eval_batch_size, False, config, device)
@@ -817,12 +879,14 @@ def fit_lstm(
         tracker.start_training(training_label or f"train={len(train_rows)} val={len(val_rows)}", config.max_epochs)
 
     for epoch in range(1, config.max_epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler, config.use_amp)
+        if tracker is not None:
+            tracker.start_epoch(epoch, len(train_loader))
+        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler, config.use_amp, tracker=tracker, batch_update_interval=config.batch_update_interval)
         val_acc = evaluate_accuracy_only(model, val_loader, device, config.use_amp)
         history.append({"epoch": epoch, "train_loss": train_loss, "val_accuracy": val_acc})
 
         if tracker is not None:
-            tracker.update_epoch(epoch)
+            tracker.finish_epoch(epoch)
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
@@ -855,7 +919,7 @@ def fit_lstm_fixed_epochs(
     model = build_model(config, input_size=len(input_vars), device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     criterion = nn.CrossEntropyLoss()
-    scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda" and config.use_amp))
+    scaler = torch.amp.GradScaler("cuda", enabled=config.use_amp) if device.type == "cuda" else None
     train_loader = make_loader(train_rows, run_lookup, input_vars, config.batch_size, True, config, device)
 
     planned_epochs = max(1, int(num_epochs))
@@ -865,10 +929,12 @@ def fit_lstm_fixed_epochs(
         tracker.start_training(training_label or f"final_train={len(train_rows)}", planned_epochs)
 
     for epoch in range(1, planned_epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler, config.use_amp)
+        if tracker is not None:
+            tracker.start_epoch(epoch, len(train_loader))
+        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler, config.use_amp, tracker=tracker, batch_update_interval=config.batch_update_interval)
         history.append({"epoch": epoch, "train_loss": train_loss})
         if tracker is not None:
-            tracker.update_epoch(epoch)
+            tracker.finish_epoch(epoch)
 
     if tracker is not None:
         tracker.finish_training(actual_epochs=planned_epochs)
@@ -1334,6 +1400,9 @@ def print_compute_summary(device: torch.device, config: TrainConfig) -> None:
     print(f"Evaluation batch size : {config.eval_batch_size}")
     print(f"DataLoader workers    : {config.num_workers}")
     print(f"Pin memory            : {config.pin_memory}")
+    if running_in_notebook() and sys.platform.startswith("win"):
+        print("Worker note           : Windows notebook mode detected; workers forced to 0 to avoid hangs.")
+    print(f"Progress heartbeat    : every {config.heartbeat_seconds:.0f}s or {config.batch_update_interval} batches")
     print("=" * 88)
 
 
@@ -1365,7 +1434,7 @@ def print_summary(result: Dict[str, Any]) -> None:
 def main(config: TrainConfig) -> Dict[str, Any]:
     set_seed(config.random_state)
 
-    script_dir = Path(__file__).resolve().parent
+    script_dir = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
     data_dir = resolve_data_dir(config, script_dir)
     save_dir = resolve_save_dir(config, script_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -1386,7 +1455,7 @@ def main(config: TrainConfig) -> Dict[str, Any]:
 
     total_trainings = estimate_total_trainings(runs_by_vehicle, config)
     print(f"Estimated total model trainings: {total_trainings}")
-    tracker = ProgressTracker(total_trainings)
+    tracker = ProgressTracker(total_trainings, heartbeat_seconds=config.heartbeat_seconds)
 
     overall_rows: List[Dict[str, Any]] = []
     all_results: Dict[str, Any] = {}
@@ -1423,11 +1492,11 @@ def main(config: TrainConfig) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    base_dir = Path(__file__).resolve().parent
+    base_dir = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
     use_cuda = torch.cuda.is_available()
 
     config = TrainConfig(
-        data_dir= r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\data\\python_data",
+        data_dir=Path(r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\data\\python_data"),
         save_dir= r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\results_lstm",
         window_sizes=(32, 64, 96, 128),
         stride_fraction=0.5,
