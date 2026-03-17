@@ -1268,8 +1268,8 @@ def main(config: TrainConfig) -> Dict[str, Any]:
 if __name__ == "__main__":
     base_dir = Path(__file__).resolve().parent
     config = TrainConfig(
-        data_dir=Path(r"C:\Users\bramb\Downloads\AI_project_simulator\A02-TAS-Repository\data\python_data"),
-        save_dir=Path(r"C:\Users\bramb\Downloads\AI_project_simulator\A02-TAS-Repository\results_lstm"),
+        data_dir=Path(r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\data\\python_data"),
+        save_dir=Path(r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\results_lstm"),
         window_sizes=(64, 96),
         stride_fraction=1.0,
         input_combinations=(
