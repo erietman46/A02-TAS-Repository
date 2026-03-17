@@ -935,7 +935,7 @@ def main(config: TrainConfig):
 if __name__ == "__main__":
     base_dir = Path(__file__).resolve().parent
     config = TrainConfig(
-        data_dir=base_dir / "python_data",
+        data_dir=base_dir / "data" / "python_data",
         window_sizes=(32, 64, 96, 128),
         stride_fraction=0.5,
         input_combinations=(
