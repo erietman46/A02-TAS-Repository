@@ -1427,8 +1427,8 @@ if __name__ == "__main__":
     use_cuda = torch.cuda.is_available()
 
     config = TrainConfig(
-        data_dir=base_dir / "data" / "python_data",
-        save_dir=base_dir / "results_lstm",
+        data_dir= r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\data\\python_data",
+        save_dir= r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\results_lstm",
         window_sizes=(32, 64, 96, 128),
         stride_fraction=0.5,
         input_combinations=(
