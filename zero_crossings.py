@@ -1,4 +1,5 @@
 from preprocessing import pilots
+import statistics
 import numpy as np
 import pandas as pd
 
@@ -23,3 +24,10 @@ df = pd.DataFrame(
     columns=[f"C{i+1}" for i in range(6)]
 )
 print(f"\nMean Zero-crossings: \n{df}")
+res = statistics.statistics(np.array(crossings))
+results = pd.DataFrame(
+    res,
+    index=[f"C{i+1}" for i in range(3)],
+    columns=["p_val", "effect_size"]
+)
+print(f"\nStatistical Results: \n{results}")
