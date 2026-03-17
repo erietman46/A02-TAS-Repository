@@ -102,6 +102,7 @@ class TrainConfig:
     stage1_epochs: int = 8
     stage1_patience: int = 3
     stage1_top_k: int = 4
+    global_tune_once_per_vehicle: bool = True
 
     random_state: int = 42
     min_run_length: int = 128
@@ -1059,9 +1060,13 @@ def estimate_total_trainings(runs_by_vehicle: Dict[str, List[Dict[str, Any]]], c
         if len(labels) < 2 or len(pilot_ids) < 3:
             continue
         n_pilots = len(pilot_ids)
-        inner_folds = n_pilots - 1
-        per_outer = inner_folds * (num_candidates + stage2_candidates) + 1 if config.stage1_enabled else inner_folds * num_candidates + 1
-        total += n_pilots * per_outer
+        if bool(config.global_tune_once_per_vehicle):
+            search_trainings = n_pilots * (num_candidates + stage2_candidates) if config.stage1_enabled else n_pilots * num_candidates
+            total += search_trainings + n_pilots
+        else:
+            inner_folds = n_pilots - 1
+            per_outer = inner_folds * (num_candidates + stage2_candidates) + 1 if config.stage1_enabled else inner_folds * num_candidates + 1
+            total += n_pilots * per_outer
     return total
 
 def run_inner_cv_hyperparameter_search(
@@ -1577,23 +1582,21 @@ if __name__ == "__main__":
     config = TrainConfig(
         data_dir=Path(r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\data\\python_data"),
         save_dir=r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\results_lstm",
-        window_sizes=(32, 64, 96, 128),
-        stride_fraction=0.5,
+        window_sizes=(64, 96),
+        stride_fraction=1.0,
         input_combinations=(
             ("e", "u"),
-            ("e", "u", "de"),
-            ("e", "u", "du"),
             ("e", "u", "de", "du"),
         ),
-        batch_size=256 if use_cuda else 128,
-        eval_batch_size=1024 if use_cuda else 256,
-        hidden_size=64,
-        num_layers=2,
-        dropout=0.2,
+        batch_size=512 if use_cuda else 128,
+        eval_batch_size=4096 if use_cuda else 512,
+        hidden_size=48,
+        num_layers=1,
+        dropout=0.1,
         learning_rate=1e-3,
         weight_decay=1e-4,
-        max_epochs=40,
-        patience=7,
+        max_epochs=20,
+        patience=4,
         random_state=42,
         min_run_length=128,
         num_workers=4 if use_cuda else 0,
@@ -1605,5 +1608,11 @@ if __name__ == "__main__":
         allow_tf32=use_cuda,
         cudnn_benchmark=use_cuda,
         compile_model=False,
+        val_check_interval=3,
+        stage1_enabled=False,
+        stage1_epochs=6,
+        stage1_patience=2,
+        stage1_top_k=2,
+        global_tune_once_per_vehicle=True,
     )
     main(config)
