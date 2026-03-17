@@ -1006,7 +1006,7 @@ from pathlib import Path
 
 if __name__ == "__main__":
     config = TrainConfig(
-        data_dir=Path(r"C:\Users\bramb\Downloads\AI_project_simulator\A02-TAS-Repository\data\python_data"),
+        data_dir=Path(r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\data\\python_data"),
         window_sizes=(32, 64, 96, 128),
         stride_fraction=0.5,
         input_combinations=(
@@ -1026,6 +1026,6 @@ if __name__ == "__main__":
         random_state=42,
         min_run_length=128,
         num_workers=0,
-        save_dir=Path(r"C:\Users\bramb\Downloads\AI_project_simulator\A02-TAS-Repository\results_lstm"),
+        save_dir=Path(r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\results_lstm"),
     )
     main(config)
