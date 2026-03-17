@@ -36,6 +36,7 @@ import copy
 import csv
 import json
 import math
+import time
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -99,6 +100,63 @@ class TrainConfig:
         "C5": "V",
         "C6": "A",
     })
+
+
+class ProgressTracker:
+    def __init__(self, total_trainings: int):
+        self.total_trainings = max(1, int(total_trainings))
+        self.completed_trainings = 0
+        self.start_time = time.time()
+        self.current_label = ""
+        self.current_planned_epochs = 1
+        self.current_epoch = 0
+
+    def start_training(self, label: str, planned_epochs: int) -> None:
+        self.current_label = label
+        self.current_planned_epochs = max(1, int(planned_epochs))
+        self.current_epoch = 0
+        self._print_status(prefix="START", newline=True)
+
+    def update_epoch(self, epoch: int) -> None:
+        self.current_epoch = max(0, int(epoch))
+        self._print_status(prefix="RUN", newline=False)
+
+    def finish_training(self, actual_epochs: int) -> None:
+        self.current_epoch = max(0, int(actual_epochs))
+        self.completed_trainings += 1
+        self._print_status(prefix="DONE", newline=True)
+
+    def _fraction_complete(self) -> float:
+        current_fraction = min(1.0, self.current_epoch / max(1, self.current_planned_epochs))
+        return min(1.0, (self.completed_trainings + current_fraction) / self.total_trainings)
+
+    def _format_seconds(self, seconds: float) -> str:
+        if not np.isfinite(seconds) or seconds < 0:
+            return "--:--:--"
+        seconds = int(round(seconds))
+        h, rem = divmod(seconds, 3600)
+        m, s = divmod(rem, 60)
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
+    def _status_message(self, prefix: str) -> str:
+        elapsed = time.time() - self.start_time
+        frac = self._fraction_complete()
+        eta = (elapsed / frac - elapsed) if frac > 1e-9 else float('inf')
+        return (
+            f"[{prefix}] training {min(self.completed_trainings + 1, self.total_trainings)}/{self.total_trainings} | "
+            f"overall {frac * 100:6.2f}% | epoch {self.current_epoch}/{self.current_planned_epochs} | "
+            f"elapsed {self._format_seconds(elapsed)} | ETA {self._format_seconds(eta)} | "
+            f"{self.current_label}"
+        )
+
+    def _print_status(self, prefix: str, newline: bool) -> None:
+        message = self._status_message(prefix)
+        if newline:
+            print(message)
+        else:
+            print(message, end="\r", flush=True)
+
+
 
 
 FILENAME_HELP = "ae2224I_measurement_data_subj<1-6>_C<1-6>.npz"
@@ -548,7 +606,7 @@ def evaluate_model(model: nn.Module, loader: DataLoader, device: str) -> Dict[st
     }
 
 
-def fit_lstm(train_windows: Sequence[Dict[str, Any]], val_windows: Sequence[Dict[str, Any]], config: TrainConfig, input_size: int):
+def fit_lstm(train_windows: Sequence[Dict[str, Any]], val_windows: Sequence[Dict[str, Any]], config: TrainConfig, input_size: int, tracker: Optional[ProgressTracker] = None, training_label: str = ""):
     model = LSTMClassifier(
         input_size=input_size,
         hidden_size=config.hidden_size,
@@ -567,11 +625,16 @@ def fit_lstm(train_windows: Sequence[Dict[str, Any]], val_windows: Sequence[Dict
     history: List[Dict[str, Any]] = []
     wait = 0
 
+    if tracker is not None:
+        tracker.start_training(training_label or f"train_windows={len(train_windows)} val_windows={len(val_windows)}", config.max_epochs)
+
     for epoch in range(1, config.max_epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, config.device)
         val_result = evaluate_model(model, val_loader, config.device)
         val_acc = float(val_result["accuracy"])
         history.append({"epoch": epoch, "train_loss": train_loss, "val_accuracy": val_acc})
+        if tracker is not None:
+            tracker.update_epoch(epoch)
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
@@ -584,10 +647,12 @@ def fit_lstm(train_windows: Sequence[Dict[str, Any]], val_windows: Sequence[Dict
                 break
 
     model.load_state_dict(best_state)
+    if tracker is not None:
+        tracker.finish_training(actual_epochs=history[-1]["epoch"] if history else 0)
     return model, history, best_epoch, best_val_acc
 
 
-def fit_lstm_fixed_epochs(train_windows: Sequence[Dict[str, Any]], config: TrainConfig, input_size: int, num_epochs: int):
+def fit_lstm_fixed_epochs(train_windows: Sequence[Dict[str, Any]], config: TrainConfig, input_size: int, num_epochs: int, tracker: Optional[ProgressTracker] = None, training_label: str = ""):
     model = LSTMClassifier(
         input_size=input_size,
         hidden_size=config.hidden_size,
@@ -600,10 +665,18 @@ def fit_lstm_fixed_epochs(train_windows: Sequence[Dict[str, Any]], config: Train
     train_loader = make_loader(train_windows, config.batch_size, True, config.num_workers)
     history: List[Dict[str, Any]] = []
 
-    for epoch in range(1, max(1, int(num_epochs)) + 1):
+    planned_epochs = max(1, int(num_epochs))
+    if tracker is not None:
+        tracker.start_training(training_label or f"final_train_windows={len(train_windows)}", planned_epochs)
+
+    for epoch in range(1, planned_epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, config.device)
         history.append({"epoch": epoch, "train_loss": train_loss})
+        if tracker is not None:
+            tracker.update_epoch(epoch)
 
+    if tracker is not None:
+        tracker.finish_training(actual_epochs=planned_epochs)
     return model, history
 
 
@@ -718,7 +791,22 @@ def run_basic_statistics(pred_rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     return results
 
 
-def run_inner_cv_hyperparameter_search(train_runs: Sequence[Dict[str, Any]], vehicle_type: str, config: TrainConfig):
+def estimate_total_trainings(runs_by_vehicle: Dict[str, List[Dict[str, Any]]], config: TrainConfig) -> int:
+    total = 0
+    num_candidates = len(config.window_sizes) * len(config.input_combinations)
+    for vehicle_type, vehicle_runs in runs_by_vehicle.items():
+        labels = {int(r["label"]) for r in vehicle_runs}
+        pilot_ids = get_unique_pilot_ids(vehicle_runs)
+        if len(labels) < 2 or len(pilot_ids) < 3:
+            continue
+        n_pilots = len(pilot_ids)
+        total += n_pilots * (num_candidates * (n_pilots - 1) + 1)
+    return total
+
+
+
+
+def run_inner_cv_hyperparameter_search(train_runs: Sequence[Dict[str, Any]], vehicle_type: str, config: TrainConfig, tracker: Optional[ProgressTracker] = None):
     inner_folds = get_leave_one_pilot_out_folds(train_runs)
     if len(inner_folds) < 2:
         raise ValueError("Need at least two pilots in the outer-training split for inner CV.")
@@ -746,7 +834,17 @@ def run_inner_cv_hyperparameter_search(train_runs: Sequence[Dict[str, Any]], veh
                     failed = True
                     break
 
-                _, _, best_epoch, best_val_acc = fit_lstm(train_windows, val_windows, config, input_size=len(input_vars))
+                training_label = (
+                    f"{vehicle_type} | inner | val={val_pilot} | vars={','.join(input_vars)} | w={window_size}"
+                )
+                _, _, best_epoch, best_val_acc = fit_lstm(
+                    train_windows,
+                    val_windows,
+                    config,
+                    input_size=len(input_vars),
+                    tracker=tracker,
+                    training_label=training_label,
+                )
                 candidate_fold_rows.append({
                     "vehicle_type": vehicle_type,
                     "validation_pilot": val_pilot,
@@ -780,7 +878,7 @@ def run_inner_cv_hyperparameter_search(train_runs: Sequence[Dict[str, Any]], veh
     return best_row, summary_rows, fold_rows
 
 
-def run_vehicle_experiment(runs_for_vehicle: Sequence[Dict[str, Any]], vehicle_type: str, config: TrainConfig) -> Dict[str, Any]:
+def run_vehicle_experiment(runs_for_vehicle: Sequence[Dict[str, Any]], vehicle_type: str, config: TrainConfig, tracker: Optional[ProgressTracker] = None) -> Dict[str, Any]:
     pilot_ids = get_unique_pilot_ids(runs_for_vehicle)
     if len(pilot_ids) < 3:
         raise ValueError(f"Vehicle {vehicle_type}: need at least three pilots for nested cross-validation.")
@@ -797,14 +895,22 @@ def run_vehicle_experiment(runs_for_vehicle: Sequence[Dict[str, Any]], vehicle_t
             print(f"Skipping {vehicle_type} / {test_pilot}: outer training split has only one class")
             continue
 
-        best_row, inner_search, inner_folds = run_inner_cv_hyperparameter_search(outer_train_runs, vehicle_type, config)
+        print(f"\nVehicle {vehicle_type}: outer fold test pilot = {test_pilot}")
+        best_row, inner_search, inner_folds = run_inner_cv_hyperparameter_search(outer_train_runs, vehicle_type, config, tracker=tracker)
         best_input_vars = tuple(str(best_row["input_vars"]).split(","))
         best_window_size = int(best_row["window_size"])
         selected_num_epochs = max(1, int(round(float(best_row["mean_best_epoch"]))))
 
         train_windows = build_window_table(outer_train_runs, best_window_size, best_input_vars, config.stride_fraction)
         test_windows = build_window_table(test_runs, best_window_size, best_input_vars, config.stride_fraction)
-        final_model, _ = fit_lstm_fixed_epochs(train_windows, config, input_size=len(best_input_vars), num_epochs=selected_num_epochs)
+        final_model, _ = fit_lstm_fixed_epochs(
+            train_windows,
+            config,
+            input_size=len(best_input_vars),
+            num_epochs=selected_num_epochs,
+            tracker=tracker,
+            training_label=f"{vehicle_type} | outer-final | test={test_pilot} | vars={','.join(best_input_vars)} | w={best_window_size}",
+        )
         test_loader = make_loader(test_windows, config.batch_size, False, config.num_workers)
         test_result = evaluate_model(final_model, test_loader, config.device)
 
@@ -979,6 +1085,10 @@ def main(config: TrainConfig) -> Dict[str, Any]:
     for run in runs:
         runs_by_vehicle[str(run["vehicle_type"])].append(run)
 
+    total_trainings = estimate_total_trainings(runs_by_vehicle, config)
+    print(f"Estimated total model trainings: {total_trainings}")
+    tracker = ProgressTracker(total_trainings=total_trainings)
+
     all_results: Dict[str, Any] = {}
     for vehicle_type in sorted(runs_by_vehicle.keys()):
         vehicle_runs = runs_by_vehicle[vehicle_type]
@@ -992,7 +1102,7 @@ def main(config: TrainConfig) -> Dict[str, Any]:
             print(f"Skipping {vehicle_type}: need at least three pilots")
             continue
 
-        result = run_vehicle_experiment(vehicle_runs, vehicle_type, config)
+        result = run_vehicle_experiment(vehicle_runs, vehicle_type, config, tracker=tracker)
         all_results[vehicle_type] = result
         save_vehicle_results(result, save_dir)
         print_summary(result)
@@ -1001,8 +1111,6 @@ def main(config: TrainConfig) -> Dict[str, Any]:
         print("No vehicle experiments completed. Check min_run_length and dataset coverage.")
     return all_results
 
-
-from pathlib import Path
 
 if __name__ == "__main__":
     config = TrainConfig(
