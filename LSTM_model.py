@@ -6,7 +6,7 @@ Pipeline implemented:
 2. Normalize each run separately.
 3. Build labeled short windows from each run.
 4. Train an LSTM classifier per vehicle type.
-5. Tune window size and input-variable combination.
+5. Tune window size and input-variable combination with nested pilot-wise CV.
 6. Evaluate with accuracy and confusion matrix.
 7. Compare confidence scores statistically at run level.
 
@@ -14,13 +14,14 @@ Expected signal keys inside each .npz file:
     e, u, and optionally t
 
 Each file can contain multiple runs, for example MATLAB-style object arrays of shape (20, 1).
-Metadata such as pilot, condition, repetition, label, and vehicle type are derived from the filename and configuration mappings.
+Metadata such as pilot, condition, repetition, label, and vehicle type are derived from the filename.
 """
 
 from __future__ import annotations
 
 import copy
-import importlib.util
+import csv
+import json
 import os
 import re
 from collections import defaultdict
@@ -30,16 +31,19 @@ from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
-from scipy import stats
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
+try:
+    from scipy import stats  # type: ignore
+except Exception:
+    stats = None
+
 
 @dataclass
 class TrainConfig:
-    data_dir: str = "python_data"
+    data_dir: str | Path = "python_data"
     window_sizes: Tuple[int, ...] = (32, 64, 96, 128)
     stride_fraction: float = 0.5
     input_combinations: Tuple[Tuple[str, ...], ...] = (
@@ -60,7 +64,7 @@ class TrainConfig:
     min_run_length: int = 128
     num_workers: int = 0
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    save_dir: str = "results_lstm"
+    save_dir: str | Path = "results_lstm"
     filename_pattern: str = r"^ae2224I_measurement_data_subj(?P<subject>[1-6])_(?P<condition>C[1-6])\.npz$"
     signal_keys: Dict[str, Tuple[str, ...]] = field(default_factory=lambda: {
         "e": ("e",),
@@ -68,12 +72,12 @@ class TrainConfig:
         "time": ("t", "time"),
     })
     condition_to_label: Dict[str, int] = field(default_factory=lambda: {
-        "C1": 0,  # Gain (P), no motion
-        "C2": 0,  # Single integrator (V), no motion
-        "C3": 0,  # Double integrator (A), no motion
-        "C4": 1,  # Gain (P), motion
-        "C5": 1,  # Single integrator (V), motion
-        "C6": 1,  # Double integrator (A), motion
+        "C1": 0,
+        "C2": 0,
+        "C3": 0,
+        "C4": 1,
+        "C5": 1,
+        "C6": 1,
     })
     condition_to_vehicle: Dict[str, str] = field(default_factory=lambda: {
         "C1": "P",
@@ -85,16 +89,87 @@ class TrainConfig:
     })
 
 
+FILENAME_HELP = "ae2224I_measurement_data_subj<1-6>_C<1-6>.npz"
+
+
 def set_seed(seed: int = 42) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def accuracy_score_np(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = np.asarray(y_pred).astype(int)
+    if y_true.size == 0:
+        return float("nan")
+    return float(np.mean(y_true == y_pred))
+
+
+def confusion_matrix_np(y_true: np.ndarray, y_pred: np.ndarray, labels: Sequence[int] = (0, 1)) -> np.ndarray:
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = np.asarray(y_pred).astype(int)
+    labels = list(labels)
+    index = {label: i for i, label in enumerate(labels)}
+    cm = np.zeros((len(labels), len(labels)), dtype=int)
+    for yt, yp in zip(y_true, y_pred):
+        if yt in index and yp in index:
+            cm[index[yt], index[yp]] += 1
+    return cm
+
+
+def classification_report_np(y_true: np.ndarray, y_pred: np.ndarray, labels: Sequence[int] = (0, 1)) -> Dict[str, Dict[str, float]]:
+    y_true = np.asarray(y_true).astype(int)
+    y_pred = np.asarray(y_pred).astype(int)
+    report: Dict[str, Dict[str, float]] = {}
+    supports = []
+    precisions = []
+    recalls = []
+    f1s = []
+
+    for label in labels:
+        tp = int(np.sum((y_true == label) & (y_pred == label)))
+        fp = int(np.sum((y_true != label) & (y_pred == label)))
+        fn = int(np.sum((y_true == label) & (y_pred != label)))
+        support = int(np.sum(y_true == label))
+        precision = float(tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+        recall = float(tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+        f1 = float(2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+        report[str(label)] = {
+            "precision": precision,
+            "recall": recall,
+            "f1-score": f1,
+            "support": support,
+        }
+        supports.append(support)
+        precisions.append(precision)
+        recalls.append(recall)
+        f1s.append(f1)
+
+    total_support = int(np.sum(supports))
+    weights = np.asarray(supports, dtype=float)
+    weight_sum = float(weights.sum()) if weights.sum() > 0 else 1.0
+    report["accuracy"] = accuracy_score_np(y_true, y_pred)
+    report["macro avg"] = {
+        "precision": float(np.mean(precisions)) if precisions else 0.0,
+        "recall": float(np.mean(recalls)) if recalls else 0.0,
+        "f1-score": float(np.mean(f1s)) if f1s else 0.0,
+        "support": total_support,
+    }
+    report["weighted avg"] = {
+        "precision": float(np.sum(np.asarray(precisions) * weights) / weight_sum),
+        "recall": float(np.sum(np.asarray(recalls) * weights) / weight_sum),
+        "f1-score": float(np.sum(np.asarray(f1s) * weights) / weight_sum),
+        "support": total_support,
+    }
+    return report
 
 
 def safe_zscore(x: np.ndarray) -> np.ndarray:
     x = np.asarray(x, dtype=np.float32)
-    mu = np.mean(x)
-    sigma = np.std(x)
+    mu = float(np.mean(x))
+    sigma = float(np.std(x))
     if sigma < 1e-8:
         return x - mu
     return (x - mu) / sigma
@@ -103,22 +178,26 @@ def safe_zscore(x: np.ndarray) -> np.ndarray:
 def derivative(x: np.ndarray, time: np.ndarray | None = None, fs: float | None = None) -> np.ndarray:
     x = np.asarray(x, dtype=np.float32)
     if time is not None:
-        return np.gradient(x, np.asarray(time, dtype=np.float32)).astype(np.float32)
+        time = np.asarray(time, dtype=np.float32)
+        if time.ndim != 1 or len(time) != len(x):
+            raise ValueError("time vector must be 1D and have the same length as x")
+        return np.gradient(x, time).astype(np.float32)
     dt = 1.0 / fs if fs not in (None, 0) else 1.0
     return np.gradient(x, dt).astype(np.float32)
 
 
 def normalize_run_signals(run: Dict) -> Dict:
     run = copy.deepcopy(run)
-    run["e"] = safe_zscore(run["e"])
-    run["u"] = safe_zscore(run["u"])
+    raw_e = np.asarray(run["e"], dtype=np.float32)
+    raw_u = np.asarray(run["u"], dtype=np.float32)
     time = run.get("time")
     fs = run.get("fs")
-    run["de"] = safe_zscore(derivative(run["e"], time=time, fs=fs))
-    run["du"] = safe_zscore(derivative(run["u"], time=time, fs=fs))
-    return run
 
-FILENAME_HELP = "ae2224I_measurement_data_subj<1-6>_C<1-6>.npz"
+    run["de"] = safe_zscore(derivative(raw_e, time=time, fs=fs))
+    run["du"] = safe_zscore(derivative(raw_u, time=time, fs=fs))
+    run["e"] = safe_zscore(raw_e)
+    run["u"] = safe_zscore(raw_u)
+    return run
 
 
 def _first_available_key(npz_obj, candidates: Sequence[str], *, required: bool = True):
@@ -126,7 +205,7 @@ def _first_available_key(npz_obj, candidates: Sequence[str], *, required: bool =
         if key in npz_obj.files:
             return key
     if required:
-        raise KeyError(f"None of the keys {candidates} were found in {npz_obj.files}")
+        raise KeyError(f"None of the keys {tuple(candidates)} were found in {npz_obj.files}")
     return None
 
 
@@ -141,10 +220,9 @@ def _to_1d_float_array(value) -> np.ndarray:
 
 
 def _split_npz_field_into_runs(value) -> List[np.ndarray]:
-    arr = np.asarray(value, allow_pickle=True)
+    arr = np.asarray(value)
     if arr.dtype == object:
         return [_to_1d_float_array(item) for item in arr.reshape(-1)]
-    arr = np.asarray(arr)
     if arr.ndim <= 1:
         return [_to_1d_float_array(arr)]
     if arr.ndim == 2 and 1 in arr.shape:
@@ -152,13 +230,15 @@ def _split_npz_field_into_runs(value) -> List[np.ndarray]:
         if flat.dtype == object:
             return [_to_1d_float_array(item) for item in flat]
         return [_to_1d_float_array(arr)]
+    if arr.ndim >= 2:
+        return [_to_1d_float_array(arr)]
     return [_to_1d_float_array(arr)]
 
 
-def _infer_fs_from_time(time_vector: np.ndarray) -> float | None:
+def _infer_fs_from_time(time_vector: np.ndarray | None) -> float | None:
     if time_vector is None or len(time_vector) < 2:
         return None
-    dt = np.diff(time_vector.astype(np.float32))
+    dt = np.diff(np.asarray(time_vector, dtype=np.float32))
     dt = dt[np.isfinite(dt)]
     if len(dt) == 0:
         return None
@@ -171,26 +251,25 @@ def _infer_fs_from_time(time_vector: np.ndarray) -> float | None:
 def _condition_label(condition: str, config: TrainConfig) -> int:
     if condition in config.condition_to_label:
         return int(config.condition_to_label[condition])
-    raise ValueError(
-        f"No label mapping configured for {condition}. "
-        f"Set TrainConfig.condition_to_label, for example {{'C1': 0, 'C2': 1, ...}}."
-    )
+    raise ValueError(f"No label mapping configured for {condition}.")
 
 
 def _condition_vehicle(condition: str, config: TrainConfig) -> str:
-    return str(config.condition_to_vehicle.get(condition, condition))
+    if condition in config.condition_to_vehicle:
+        return str(config.condition_to_vehicle[condition])
+    raise ValueError(f"No vehicle mapping configured for {condition}.")
 
 
-def load_runs_from_npz_dir(python_data: str, config: TrainConfig, min_run_length: int = 1) -> List[Dict]:
-    data_path = Path(python_data)
+def load_runs_from_npz_dir(data_dir: str | Path, config: TrainConfig, min_run_length: int = 1) -> List[Dict]:
+    data_path = Path(data_dir)
     if not data_path.exists():
-        raise FileNotFoundError(f"Data directory not found: {python_data}")
+        raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
     pattern = re.compile(config.filename_pattern, re.IGNORECASE)
-    npz_files = [p for p in sorted(data_path.glob('*.npz')) if pattern.match(p.name)]
+    npz_files = [p for p in sorted(data_path.glob("*.npz")) if pattern.match(p.name)]
     if not npz_files:
         raise FileNotFoundError(
-            f"No .npz files matched the expected naming pattern in {python_data}. Expected format: {FILENAME_HELP}"
+            f"No .npz files matched the expected naming pattern in {data_dir}. Expected format: {FILENAME_HELP}"
         )
 
     expected = {f"ae2224I_measurement_data_subj{s}_C{c}.npz".lower() for s in range(1, 7) for c in range(1, 7)}
@@ -207,132 +286,61 @@ def load_runs_from_npz_dir(python_data: str, config: TrainConfig, min_run_length
         if match is None:
             continue
         subject = f"subj{match.group('subject')}"
-        condition = match.group('condition').upper()
+        condition = match.group("condition").upper()
 
         with np.load(npz_file, allow_pickle=True) as npz_obj:
-            e_key = _first_available_key(npz_obj, config.signal_keys['e'])
-            u_key = _first_available_key(npz_obj, config.signal_keys['u'])
-            t_key = _first_available_key(npz_obj, config.signal_keys['time'], required=False)
+            e_key = _first_available_key(npz_obj, config.signal_keys["e"])
+            u_key = _first_available_key(npz_obj, config.signal_keys["u"])
+            t_key = _first_available_key(npz_obj, config.signal_keys["time"], required=False)
 
             e_runs = _split_npz_field_into_runs(npz_obj[e_key])
             u_runs = _split_npz_field_into_runs(npz_obj[u_key])
             t_runs = _split_npz_field_into_runs(npz_obj[t_key]) if t_key is not None else [None] * len(e_runs)
 
-            if len(u_runs) != len(e_runs):
+            if len(e_runs) != len(u_runs):
                 raise ValueError(f"{npz_file.name}: e has {len(e_runs)} runs but u has {len(u_runs)} runs.")
             if t_key is not None and len(t_runs) != len(e_runs):
                 raise ValueError(f"{npz_file.name}: e has {len(e_runs)} runs but t has {len(t_runs)} runs.")
 
             for idx, (e_run, u_run) in enumerate(zip(e_runs, u_runs), start=1):
                 time_run = t_runs[idx - 1] if idx - 1 < len(t_runs) else None
-                n = min(len(e_run), len(u_run), len(time_run) if time_run is not None else 10**12)
+                lengths = [len(e_run), len(u_run)]
+                if time_run is not None:
+                    lengths.append(len(time_run))
+                n = int(min(lengths))
                 if n < min_run_length:
                     continue
 
                 cleaned = {
-                    'e': np.asarray(e_run[:n], dtype=np.float32),
-                    'u': np.asarray(u_run[:n], dtype=np.float32),
-                    'label': _condition_label(condition, config),
-                    'vehicle_type': _condition_vehicle(condition, config),
-                    'pilot_id': subject,
-                    'condition_id': condition,
-                    'repetition_id': f'rep{idx}',
-                    'source_file': npz_file.name,
-                    'run_id': f'{npz_file.stem}_rep{idx}',
+                    "e": np.asarray(e_run[:n], dtype=np.float32),
+                    "u": np.asarray(u_run[:n], dtype=np.float32),
+                    "label": _condition_label(condition, config),
+                    "vehicle_type": _condition_vehicle(condition, config),
+                    "pilot_id": subject,
+                    "condition_id": condition,
+                    "repetition_id": f"rep{idx}",
+                    "source_file": npz_file.name,
+                    "run_id": f"{npz_file.stem}_rep{idx}",
                 }
                 if time_run is not None:
-                    cleaned['time'] = np.asarray(time_run[:n], dtype=np.float32)
-                    fs = _infer_fs_from_time(cleaned['time'])
+                    cleaned["time"] = np.asarray(time_run[:n], dtype=np.float32)
+                    fs = _infer_fs_from_time(cleaned["time"])
                     if fs is not None:
-                        cleaned['fs'] = fs
+                        cleaned["fs"] = fs
 
                 all_runs.append(normalize_run_signals(cleaned))
 
     if not all_runs:
-        raise ValueError('No valid runs were loaded from the .npz files. Check run lengths and naming.')
-    return all_runs
-
-
-def extract_runs_from_module(module) -> List[Dict]:
-    if hasattr(module, "get_runs") and callable(module.get_runs):
-        runs = module.get_runs()
-    elif hasattr(module, "RUNS"):
-        runs = module.RUNS
-    elif hasattr(module, "DATA"):
-        runs = module.DATA
-    else:
-        raise ValueError(
-            f"Could not find runs in module {module.__name__}. Expected get_runs(), RUNS, or DATA."
-        )
-    if not isinstance(runs, (list, tuple)):
-        raise TypeError(f"Runs in module {module.__name__} must be a list or tuple.")
-    return list(runs)
-
-
-def import_python_module(py_file: Path):
-    spec = importlib.util.spec_from_file_location(py_file.stem, py_file)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Could not import {py_file}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def load_runs_from_python_dir(python_data: str, min_run_length: int = 1) -> List[Dict]:
-    data_path = Path(python_data)
-    if not data_path.exists():
-        raise FileNotFoundError(f"Data directory not found: {python_data}")
-
-    py_files = [
-        p for p in data_path.glob("*.py")
-        if p.name != Path(__file__).name and not p.name.startswith("__")
-    ]
-    if not py_files:
-        raise FileNotFoundError(f"No Python data files found in: {python_data}")
-
-    all_runs = []
-    for py_file in sorted(py_files):
-        module = import_python_module(py_file)
-        runs = extract_runs_from_module(module)
-
-        for idx, run in enumerate(runs):
-            required = {"e", "u", "label", "vehicle_type", "pilot_id", "repetition_id"}
-            missing = required - set(run.keys())
-            if missing:
-                raise KeyError(f"{py_file.name}, run {idx}: missing keys {missing}")
-
-            n = min(len(run["e"]), len(run["u"]))
-            if n < min_run_length:
-                continue
-
-            cleaned = {
-                "e": np.asarray(run["e"][:n], dtype=np.float32),
-                "u": np.asarray(run["u"][:n], dtype=np.float32),
-                "label": int(run["label"]),
-                "vehicle_type": str(run["vehicle_type"]),
-                "pilot_id": str(run["pilot_id"]),
-                "repetition_id": str(run["repetition_id"]),
-                "source_file": py_file.name,
-                "run_id": f"{py_file.stem}_run{idx}",
-            }
-            if "time" in run and run["time"] is not None:
-                cleaned["time"] = np.asarray(run["time"][:n], dtype=np.float32)
-            if "fs" in run and run["fs"] is not None:
-                cleaned["fs"] = float(run["fs"])
-
-            all_runs.append(normalize_run_signals(cleaned))
-
-    if not all_runs:
-        raise ValueError("No valid runs were loaded.")
+        raise ValueError("No valid runs were loaded from the .npz files. Check run lengths and naming.")
     return all_runs
 
 
 def make_windows_for_run(run: Dict, window_size: int, stride: int, input_vars: Sequence[str]) -> List[Dict]:
     n = len(run["e"])
-    windows = []
+    windows: List[Dict] = []
     for start in range(0, n - window_size + 1, stride):
         end = start + window_size
-        x = np.stack([run[var][start:end] for var in input_vars], axis=-1)
+        x = np.stack([np.asarray(run[var][start:end], dtype=np.float32) for var in input_vars], axis=-1)
         windows.append(
             {
                 "x": x.astype(np.float32),
@@ -350,8 +358,8 @@ def make_windows_for_run(run: Dict, window_size: int, stride: int, input_vars: S
 
 
 def build_window_table(runs: Sequence[Dict], window_size: int, input_vars: Sequence[str], stride_fraction: float) -> List[Dict]:
-    stride = max(1, int(window_size * stride_fraction))
-    all_windows = []
+    stride = max(1, int(round(window_size * stride_fraction)))
+    all_windows: List[Dict] = []
     for run in runs:
         all_windows.extend(make_windows_for_run(run, window_size, stride, input_vars))
     if not all_windows:
@@ -383,7 +391,14 @@ class WindowDataset(Dataset):
 
 
 class LSTMClassifier(nn.Module):
-    def __init__(self, input_size: int, hidden_size: int = 64, num_layers: int = 2, dropout: float = 0.2, num_classes: int = 2):
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int = 64,
+        num_layers: int = 2,
+        dropout: float = 0.2,
+        num_classes: int = 2,
+    ):
         super().__init__()
         effective_dropout = dropout if num_layers > 1 else 0.0
         self.lstm = nn.LSTM(
@@ -447,7 +462,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
         loss.backward()
         optimizer.step()
         bs = x.size(0)
-        total_loss += loss.item() * bs
+        total_loss += float(loss.item()) * bs
         n += bs
     return total_loss / max(1, n)
 
@@ -465,15 +480,15 @@ def predict_loader(model, loader, device):
         y_pred.extend(preds.tolist())
         y_prob.extend(probs[:, 1].tolist())
         metas.extend(meta)
-    return np.array(y_true), np.array(y_pred), np.array(y_prob), metas
+    return np.asarray(y_true, dtype=int), np.asarray(y_pred, dtype=int), np.asarray(y_prob, dtype=float), metas
 
 
 def evaluate_model(model, loader, device):
     y_true, y_pred, y_prob, metas = predict_loader(model, loader, device)
     return {
-        "accuracy": accuracy_score(y_true, y_pred),
-        "confusion_matrix": confusion_matrix(y_true, y_pred, labels=[0, 1]),
-        "classification_report": classification_report(y_true, y_pred, output_dict=True, zero_division=0),
+        "accuracy": accuracy_score_np(y_true, y_pred),
+        "confusion_matrix": confusion_matrix_np(y_true, y_pred, labels=[0, 1]),
+        "classification_report": classification_report_np(y_true, y_pred, labels=[0, 1]),
         "y_true": y_true,
         "y_pred": y_pred,
         "y_prob": y_prob,
@@ -495,30 +510,30 @@ def fit_lstm(train_windows: Sequence[Dict], val_windows: Sequence[Dict], config:
     train_loader = make_loader(train_windows, config.batch_size, True, config.num_workers)
     val_loader = make_loader(val_windows, config.batch_size, False, config.num_workers)
 
-    best_model = None
+    best_model_state = copy.deepcopy(model.state_dict())
     best_val_acc = -np.inf
-    best_epoch = -1
+    best_epoch = 1
     wait = 0
     history = []
 
     for epoch in range(1, config.max_epochs + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, config.device)
         val_result = evaluate_model(model, val_loader, config.device)
-        val_acc = val_result["accuracy"]
+        val_acc = float(val_result["accuracy"])
         history.append({"epoch": epoch, "train_loss": train_loss, "val_accuracy": val_acc})
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             best_epoch = epoch
-            best_model = copy.deepcopy(model.state_dict())
+            best_model_state = copy.deepcopy(model.state_dict())
             wait = 0
         else:
             wait += 1
             if wait >= config.patience:
                 break
 
-    model.load_state_dict(best_model)
-    return model, pd.DataFrame(history), best_epoch, best_val_acc
+    model.load_state_dict(best_model_state)
+    return model, pd.DataFrame(history), int(best_epoch), float(best_val_acc)
 
 
 def build_prediction_table(eval_result: Dict) -> pd.DataFrame:
@@ -552,9 +567,9 @@ def combine_prediction_tables(prediction_tables: Sequence[pd.DataFrame]) -> Dict
 
     return {
         "combined_prediction_df": combined,
-        "accuracy": accuracy_score(y_true, y_pred),
-        "confusion_matrix": confusion_matrix(y_true, y_pred, labels=[0, 1]),
-        "classification_report": classification_report(y_true, y_pred, output_dict=True, zero_division=0),
+        "accuracy": accuracy_score_np(y_true, y_pred),
+        "confusion_matrix": confusion_matrix_np(y_true, y_pred, labels=[0, 1]),
+        "classification_report": classification_report_np(y_true, y_pred, labels=[0, 1]),
         "y_true": y_true,
         "y_pred": y_pred,
         "y_prob": y_prob,
@@ -609,7 +624,7 @@ def run_inner_cv_hyperparameter_search(train_runs: Sequence[Dict], vehicle_type:
                     candidate_failed = True
                     break
 
-                model, _, best_epoch, best_val_acc = fit_lstm(
+                _, _, best_epoch, best_val_acc = fit_lstm(
                     train_windows=train_windows,
                     val_windows=val_windows,
                     config=config,
@@ -657,10 +672,6 @@ def run_inner_cv_hyperparameter_search(train_runs: Sequence[Dict], vehicle_type:
 
 
 def run_basic_statistics(pred_df: pd.DataFrame) -> Dict[str, Dict]:
-    """
-    Confidence values are aggregated per run before inferential testing,
-    because overlapping windows are not independent observations.
-    """
     results: Dict[str, Dict] = {}
 
     run_df = (
@@ -669,8 +680,15 @@ def run_basic_statistics(pred_df: pd.DataFrame) -> Dict[str, Dict]:
         .rename(columns={"motion_on_confidence": "mean_motion_on_confidence"})
     )
 
-    off_scores = run_df.loc[run_df["true_label"] == 0, "mean_motion_on_confidence"].values
-    on_scores = run_df.loc[run_df["true_label"] == 1, "mean_motion_on_confidence"].values
+    if stats is None:
+        results["statistics_note"] = {
+            "message": "scipy is not installed; t-test and ANOVA were skipped."
+        }
+        results["aggregated_run_predictions"] = run_df
+        return results
+
+    off_scores = run_df.loc[run_df["true_label"] == 0, "mean_motion_on_confidence"].to_numpy(dtype=float)
+    on_scores = run_df.loc[run_df["true_label"] == 1, "mean_motion_on_confidence"].to_numpy(dtype=float)
 
     if len(off_scores) >= 2 and len(on_scores) >= 2:
         t_stat, p_val = stats.ttest_ind(off_scores, on_scores, equal_var=False)
@@ -683,20 +701,20 @@ def run_basic_statistics(pred_df: pd.DataFrame) -> Dict[str, Dict]:
             "mean_on": float(np.mean(on_scores)),
         }
 
-    pilot_groups = [grp["mean_motion_on_confidence"].values for _, grp in run_df.groupby("pilot_id") if len(grp) >= 2]
+    pilot_groups = [grp["mean_motion_on_confidence"].to_numpy(dtype=float) for _, grp in run_df.groupby("pilot_id") if len(grp) >= 2]
     if len(pilot_groups) >= 2:
         f_stat, p_val = stats.f_oneway(*pilot_groups)
         results["anova_by_pilot"] = {
-            "num_groups": len(pilot_groups),
+            "num_groups": int(len(pilot_groups)),
             "f_statistic": float(f_stat),
             "p_value": float(p_val),
         }
 
-    repetition_groups = [grp["mean_motion_on_confidence"].values for _, grp in run_df.groupby("repetition_id") if len(grp) >= 2]
+    repetition_groups = [grp["mean_motion_on_confidence"].to_numpy(dtype=float) for _, grp in run_df.groupby("repetition_id") if len(grp) >= 2]
     if len(repetition_groups) >= 2:
         f_stat, p_val = stats.f_oneway(*repetition_groups)
         results["anova_by_repetition"] = {
-            "num_groups": len(repetition_groups),
+            "num_groups": int(len(repetition_groups)),
             "f_statistic": float(f_stat),
             "p_value": float(p_val),
         }
@@ -750,7 +768,7 @@ def run_vehicle_experiment(runs_for_vehicle: Sequence[Dict], vehicle_type: str, 
         pred_df["selected_num_epochs"] = selected_num_epochs
         prediction_tables.append(pred_df)
 
-        fold_accuracy = accuracy_score(pred_df["true_label"], pred_df["pred_label"])
+        fold_accuracy = accuracy_score_np(pred_df["true_label"].to_numpy(dtype=int), pred_df["pred_label"].to_numpy(dtype=int))
         outer_fold_rows.append(
             {
                 "vehicle_type": vehicle_type,
@@ -792,7 +810,19 @@ def run_vehicle_experiment(runs_for_vehicle: Sequence[Dict], vehicle_type: str, 
     }
 
 
-def save_vehicle_results(result: Dict, save_dir: str) -> None:
+def _write_json(path: Path, data: Dict) -> None:
+    def _convert(obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.integer, np.floating)):
+            return obj.item()
+        return obj
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, default=_convert)
+
+
+def save_vehicle_results(result: Dict, save_dir: str | Path) -> None:
     vehicle_dir = Path(save_dir) / result["vehicle_type"]
     vehicle_dir.mkdir(parents=True, exist_ok=True)
 
@@ -811,6 +841,7 @@ def save_vehicle_results(result: Dict, save_dir: str) -> None:
     pd.DataFrame(cm, index=["true_off", "true_on"], columns=["pred_off", "pred_on"]).to_csv(
         vehicle_dir / "confusion_matrix.csv"
     )
+    _write_json(vehicle_dir / "classification_report.json", result["test_result"]["classification_report"])
 
     with open(vehicle_dir / "summary.txt", "w", encoding="utf-8") as f:
         f.write(f"Vehicle type: {result['vehicle_type']}\n")
@@ -847,17 +878,40 @@ def print_summary(result: Dict) -> None:
             print(f"  {key}: {value}")
 
 
+def print_dataset_summary(runs: Sequence[Dict]) -> None:
+    df = pd.DataFrame(
+        {
+            "vehicle_type": [r["vehicle_type"] for r in runs],
+            "pilot_id": [r["pilot_id"] for r in runs],
+            "label": [r["label"] for r in runs],
+            "condition_id": [r["condition_id"] for r in runs],
+            "repetition_id": [r["repetition_id"] for r in runs],
+            "run_id": [r["run_id"] for r in runs],
+        }
+    )
+    print("Loaded dataset summary")
+    print(f"  total runs     : {len(df)}")
+    print(f"  pilots         : {sorted(df['pilot_id'].unique().tolist())}")
+    print(f"  vehicles       : {sorted(df['vehicle_type'].unique().tolist())}")
+    print(f"  class counts   : {df['label'].value_counts().sort_index().to_dict()}")
+    print("  runs per vehicle and class:")
+    print(df.groupby(["vehicle_type", "label"]).size().rename("n").to_string())
+
+
 def main(config: TrainConfig):
     set_seed(config.random_state)
-    os.makedirs(config.save_dir, exist_ok=True)
+    save_dir = Path(config.save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
 
-    runs = load_runs_from_npz_dir(config.python_data, config=config, min_run_length=config.min_run_length)
+    runs = load_runs_from_npz_dir(config.data_dir, config=config, min_run_length=config.min_run_length)
+    print_dataset_summary(runs)
+
     runs_by_vehicle = defaultdict(list)
     for run in runs:
         runs_by_vehicle[run["vehicle_type"]].append(run)
 
     all_results = {}
-    for vehicle_type, vehicle_runs in runs_by_vehicle.items():
+    for vehicle_type, vehicle_runs in sorted(runs_by_vehicle.items()):
         labels = [r["label"] for r in vehicle_runs]
         pilot_ids = get_unique_pilot_ids(vehicle_runs)
 
@@ -870,7 +924,7 @@ def main(config: TrainConfig):
 
         result = run_vehicle_experiment(vehicle_runs, vehicle_type, config)
         all_results[vehicle_type] = result
-        save_vehicle_results(result, config.save_dir)
+        save_vehicle_results(result, save_dir)
         print_summary(result)
 
     if not all_results:
@@ -879,8 +933,9 @@ def main(config: TrainConfig):
 
 
 if __name__ == "__main__":
-    CONFIG = TrainConfig(
-        data_dir="python_data",   # change this to your folder with AE2224-I .npz files
+    base_dir = Path(__file__).resolve().parent
+    config = TrainConfig(
+        data_dir=base_dir / "python_data",
         window_sizes=(32, 64, 96, 128),
         stride_fraction=0.5,
         input_combinations=(
@@ -900,6 +955,6 @@ if __name__ == "__main__":
         random_state=42,
         min_run_length=128,
         num_workers=0,
-        save_dir="results_lstm",
+        save_dir=base_dir / "results_lstm",
     )
-    main(CONFIG)
+    main(config)
