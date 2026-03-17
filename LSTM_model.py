@@ -87,8 +87,8 @@ class TrainConfig:
         ("e", "u", "de", "du"),
     )
 
-    batch_size: int = 256
-    eval_batch_size: int = 1024
+    batch_size: int = 512
+    eval_batch_size: int = 4096
     hidden_size: int = 64
     num_layers: int = 2
     dropout: float = 0.2
@@ -96,6 +96,12 @@ class TrainConfig:
     weight_decay: float = 1e-4
     max_epochs: int = 40
     patience: int = 7
+    val_check_interval: int = 2
+
+    stage1_enabled: bool = True
+    stage1_epochs: int = 8
+    stage1_patience: int = 3
+    stage1_top_k: int = 4
 
     random_state: int = 42
     min_run_length: int = 128
@@ -739,6 +745,11 @@ def build_model(config: TrainConfig, input_size: int, device: torch.device) -> n
     return model
 
 
+def _should_run_validation(epoch: int, max_epochs: int, val_check_interval: int) -> bool:
+    interval = max(1, int(val_check_interval))
+    return epoch == 1 or epoch == max_epochs or (epoch % interval == 0)
+
+
 def train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -860,6 +871,9 @@ def fit_lstm(
     device: torch.device,
     tracker: Optional[ProgressTracker] = None,
     training_label: str = "",
+    max_epochs_override: Optional[int] = None,
+    patience_override: Optional[int] = None,
+    val_check_interval_override: Optional[int] = None,
 ) -> Tuple[nn.Module, List[Dict[str, Any]], int, float]:
     model = build_model(config, input_size=len(input_vars), device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
@@ -869,6 +883,10 @@ def fit_lstm(
     train_loader = make_loader(train_rows, run_lookup, input_vars, config.batch_size, True, config, device)
     val_loader = make_loader(val_rows, run_lookup, input_vars, config.eval_batch_size, False, config, device)
 
+    max_epochs = int(max_epochs_override or config.max_epochs)
+    patience = int(patience_override or config.patience)
+    val_check_interval = int(val_check_interval_override or config.val_check_interval)
+
     best_state = copy.deepcopy(model.state_dict())
     best_val_acc = -float("inf")
     best_epoch = 1
@@ -876,27 +894,33 @@ def fit_lstm(
     wait = 0
 
     if tracker is not None:
-        tracker.start_training(training_label or f"train={len(train_rows)} val={len(val_rows)}", config.max_epochs)
+        tracker.start_training(training_label or f"train={len(train_rows)} val={len(val_rows)}", max_epochs)
 
-    for epoch in range(1, config.max_epochs + 1):
+    for epoch in range(1, max_epochs + 1):
         if tracker is not None:
             tracker.start_epoch(epoch, len(train_loader))
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device, scaler, config.use_amp, tracker=tracker, batch_update_interval=config.batch_update_interval)
-        val_acc = evaluate_accuracy_only(model, val_loader, device, config.use_amp)
-        history.append({"epoch": epoch, "train_loss": train_loss, "val_accuracy": val_acc})
+
+        val_acc: Optional[float] = None
+        if _should_run_validation(epoch, max_epochs, val_check_interval):
+            val_acc = evaluate_accuracy_only(model, val_loader, device, config.use_amp)
+            history.append({"epoch": epoch, "train_loss": train_loss, "val_accuracy": val_acc})
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_epoch = epoch
+                best_state = copy.deepcopy(model.state_dict())
+                wait = 0
+            else:
+                wait += 1
+                if wait >= patience:
+                    if tracker is not None:
+                        tracker.finish_epoch(epoch)
+                    break
+        else:
+            history.append({"epoch": epoch, "train_loss": train_loss, "val_accuracy": None})
 
         if tracker is not None:
             tracker.finish_epoch(epoch)
-
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            best_epoch = epoch
-            best_state = copy.deepcopy(model.state_dict())
-            wait = 0
-        else:
-            wait += 1
-            if wait >= config.patience:
-                break
 
     model.load_state_dict(best_state)
 
@@ -904,7 +928,6 @@ def fit_lstm(
         tracker.finish_training(actual_epochs=history[-1]["epoch"] if history else 0)
 
     return model, history, best_epoch, best_val_acc
-
 
 def fit_lstm_fixed_epochs(
     train_rows: Sequence[Dict[str, Any]],
@@ -1029,55 +1052,50 @@ def run_basic_statistics(run_pred_rows: Sequence[Dict[str, Any]]) -> Dict[str, A
 def estimate_total_trainings(runs_by_vehicle: Dict[str, List[Dict[str, Any]]], config: TrainConfig) -> int:
     total = 0
     num_candidates = len(config.window_sizes) * len(config.input_combinations)
+    stage2_candidates = min(num_candidates, max(1, int(config.stage1_top_k))) if config.stage1_enabled else num_candidates
     for vehicle_runs in runs_by_vehicle.values():
         labels = {int(r["label"]) for r in vehicle_runs}
         pilot_ids = get_unique_pilot_ids(vehicle_runs)
         if len(labels) < 2 or len(pilot_ids) < 3:
             continue
         n_pilots = len(pilot_ids)
-        total += n_pilots * (num_candidates * (n_pilots - 1) + 1)
+        inner_folds = n_pilots - 1
+        per_outer = inner_folds * (num_candidates + stage2_candidates) + 1 if config.stage1_enabled else inner_folds * num_candidates + 1
+        total += n_pilots * per_outer
     return total
 
-
 def run_inner_cv_hyperparameter_search(
-    train_runs: Sequence[Dict[str, Any]],
+    train_pilot_ids: Sequence[str],
     vehicle_type: str,
     config: TrainConfig,
     device: torch.device,
+    run_lookup: Dict[str, Dict[str, Any]],
+    candidate_cache: Dict[Tuple[Tuple[str, ...], int], Dict[str, Any]],
     tracker: Optional[ProgressTracker] = None,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]]]:
-    train_pilot_ids = get_unique_pilot_ids(train_runs)
+    train_pilot_ids = list(train_pilot_ids)
     if len(train_pilot_ids) < 2:
         raise ValueError("Need at least two pilots in the outer-training split for inner CV.")
 
-    run_lookup, candidate_cache = build_candidate_cache(train_runs, config)
-    summary_rows: List[Dict[str, Any]] = []
-    fold_rows: List[Dict[str, Any]] = []
+    candidate_keys = list(candidate_cache.keys())
+    stage1_rows: List[Dict[str, Any]] = []
 
-    for input_vars in config.input_combinations:
-        for window_size in config.window_sizes:
-            candidate_entry = candidate_cache.get((tuple(input_vars), int(window_size)))
-            if candidate_entry is None:
-                continue
-
-            candidate_fold_rows: List[Dict[str, Any]] = []
+    if config.stage1_enabled:
+        for input_vars, window_size in candidate_keys:
+            candidate_entry = candidate_cache[(tuple(input_vars), int(window_size))]
+            accs: List[float] = []
+            epochs: List[int] = []
             failed = False
 
             for val_pilot in train_pilot_ids:
                 inner_train_pilots = [p for p in train_pilot_ids if p != val_pilot]
                 train_rows = collect_rows_for_pilots(candidate_entry, inner_train_pilots)
                 val_rows = collect_rows_for_pilots(candidate_entry, [val_pilot])
-
-                if not train_rows or not val_rows:
+                if not train_rows or not val_rows or len({int(row["y"]) for row in train_rows}) < 2:
                     failed = True
                     break
 
-                train_labels = {int(row["y"]) for row in train_rows}
-                if len(train_labels) < 2:
-                    failed = True
-                    break
-
-                label = f"{vehicle_type} | inner | val={val_pilot} | vars={','.join(input_vars)} | w={window_size}"
+                label = f"{vehicle_type} | stage1 | val={val_pilot} | vars={','.join(input_vars)} | w={window_size}"
                 _, _, best_epoch, best_val_acc = fit_lstm(
                     train_rows=train_rows,
                     val_rows=val_rows,
@@ -1087,44 +1105,98 @@ def run_inner_cv_hyperparameter_search(
                     device=device,
                     tracker=tracker,
                     training_label=label,
+                    max_epochs_override=config.stage1_epochs,
+                    patience_override=config.stage1_patience,
+                    val_check_interval_override=max(2, config.val_check_interval),
                 )
+                accs.append(float(best_val_acc))
+                epochs.append(int(best_epoch))
 
-                candidate_fold_rows.append({
+            if not failed and accs:
+                stage1_rows.append({
                     "vehicle_type": vehicle_type,
-                    "validation_pilot": val_pilot,
                     "input_vars": ",".join(input_vars),
                     "window_size": int(window_size),
-                    "best_epoch": int(best_epoch),
-                    "best_val_accuracy": float(best_val_acc),
+                    "mean_stage1_val_accuracy": float(np.mean(accs)),
+                    "std_stage1_val_accuracy": float(np.std(accs, ddof=0)),
+                    "mean_stage1_best_epoch": float(np.mean(epochs)),
                 })
 
-            if failed or not candidate_fold_rows:
-                continue
+        if not stage1_rows:
+            raise ValueError("Stage-1 search could not evaluate any hyperparameter settings.")
 
-            fold_rows.extend(candidate_fold_rows)
-            accs = [row["best_val_accuracy"] for row in candidate_fold_rows]
-            epochs = [row["best_epoch"] for row in candidate_fold_rows]
+        stage1_rows = sorted(stage1_rows, key=lambda r: (-r["mean_stage1_val_accuracy"], r["std_stage1_val_accuracy"], r["window_size"]))
+        selected = stage1_rows[: min(len(stage1_rows), max(1, int(config.stage1_top_k)))]
+        selected_keys = [
+            (tuple(str(row["input_vars"]).split(",")), int(row["window_size"]))
+            for row in selected
+        ]
+    else:
+        selected_keys = candidate_keys
 
-            summary_rows.append({
+    summary_rows: List[Dict[str, Any]] = []
+    fold_rows: List[Dict[str, Any]] = []
+
+    for input_vars, window_size in selected_keys:
+        candidate_entry = candidate_cache.get((tuple(input_vars), int(window_size)))
+        if candidate_entry is None:
+            continue
+
+        candidate_fold_rows: List[Dict[str, Any]] = []
+        failed = False
+
+        for val_pilot in train_pilot_ids:
+            inner_train_pilots = [p for p in train_pilot_ids if p != val_pilot]
+            train_rows = collect_rows_for_pilots(candidate_entry, inner_train_pilots)
+            val_rows = collect_rows_for_pilots(candidate_entry, [val_pilot])
+
+            if not train_rows or not val_rows or len({int(row["y"]) for row in train_rows}) < 2:
+                failed = True
+                break
+
+            label = f"{vehicle_type} | inner | val={val_pilot} | vars={','.join(input_vars)} | w={window_size}"
+            _, _, best_epoch, best_val_acc = fit_lstm(
+                train_rows=train_rows,
+                val_rows=val_rows,
+                run_lookup=run_lookup,
+                input_vars=input_vars,
+                config=config,
+                device=device,
+                tracker=tracker,
+                training_label=label,
+            )
+
+            candidate_fold_rows.append({
                 "vehicle_type": vehicle_type,
+                "validation_pilot": val_pilot,
                 "input_vars": ",".join(input_vars),
                 "window_size": int(window_size),
-                "mean_inner_val_accuracy": float(np.mean(accs)),
-                "std_inner_val_accuracy": float(np.std(accs, ddof=0)),
-                "mean_best_epoch": float(np.mean(epochs)),
-                "num_inner_folds": int(len(candidate_fold_rows)),
-                "total_windows_candidate": int(candidate_entry["total_windows"]),
+                "best_epoch": int(best_epoch),
+                "best_val_accuracy": float(best_val_acc),
             })
+
+        if failed or not candidate_fold_rows:
+            continue
+
+        fold_rows.extend(candidate_fold_rows)
+        accs = [row["best_val_accuracy"] for row in candidate_fold_rows]
+        epochs = [row["best_epoch"] for row in candidate_fold_rows]
+        summary_rows.append({
+            "vehicle_type": vehicle_type,
+            "input_vars": ",".join(input_vars),
+            "window_size": int(window_size),
+            "mean_inner_val_accuracy": float(np.mean(accs)),
+            "std_inner_val_accuracy": float(np.std(accs, ddof=0)),
+            "mean_best_epoch": float(np.mean(epochs)),
+            "num_inner_folds": int(len(candidate_fold_rows)),
+            "total_windows_candidate": int(candidate_entry["total_windows"]),
+        })
 
     if not summary_rows:
         raise ValueError("Inner CV could not evaluate any hyperparameter settings.")
 
-    summary_rows = sorted(
-        summary_rows,
-        key=lambda r: (-r["mean_inner_val_accuracy"], r["std_inner_val_accuracy"], r["window_size"]),
-    )
+    summary_rows = sorted(summary_rows, key=lambda r: (-r["mean_inner_val_accuracy"], r["std_inner_val_accuracy"], r["window_size"]))
     return summary_rows[0], summary_rows, fold_rows
-
 
 def run_vehicle_experiment(
     runs_for_vehicle: Sequence[Dict[str, Any]],
@@ -1151,11 +1223,18 @@ def run_vehicle_experiment(
             continue
 
         print(f"\nVehicle {vehicle_type}: outer fold test pilot = {test_pilot}")
+        outer_train_pilots = [p for p in pilot_ids if p != test_pilot]
+        filtered_candidate_cache = {
+            key: value for key, value in candidate_cache_all.items()
+            if all(value["rows_by_pilot"].get(pilot, []) for pilot in outer_train_pilots + [test_pilot])
+        }
         best_row, _, _ = run_inner_cv_hyperparameter_search(
-            outer_train_runs,
-            vehicle_type,
-            config,
-            device,
+            train_pilot_ids=outer_train_pilots,
+            vehicle_type=vehicle_type,
+            config=config,
+            device=device,
+            run_lookup=run_lookup_all,
+            candidate_cache=filtered_candidate_cache,
             tracker=tracker,
         )
 
@@ -1496,8 +1575,8 @@ if __name__ == "__main__":
     use_cuda = torch.cuda.is_available()
 
     config = TrainConfig(
-        data_dir=Path(r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\data\\python_data"),
-        save_dir= r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\results_lstm",
+        data_dir=Path(r"C:\Users\bramb\Downloads\AI_project_simulator\A02-TAS-Repository\data\python_data"),
+        save_dir=base_dir / "results_lstm",
         window_sizes=(32, 64, 96, 128),
         stride_fraction=0.5,
         input_combinations=(
