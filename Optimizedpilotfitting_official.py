@@ -79,64 +79,57 @@ def cost_function(params, w, vis_data, vest_data, condition, weight_vis=1.0, wei
 
     return float(np.real(cost))
 
+
 # ==============================================================================
 # PARAMETER BOUNDS & INITIAL GUESSES
 # ==============================================================================
+
+VIS_BOUNDS = [
+    (0.01, 20.0),   # Kp
+    (0.0,  2.0),    # TL
+    (0.01, 5.0),    # TI
+    (0.01, 0.5),    # tau  [s]
+    (5.0,  25.0),   # omega_nm  [rad/s]
+    (0.1,  1.0),    # zeta_nm
+]
+
+# Vestibular (Hpxd) parameter bounds: Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm, zeta_nm
+VEST_BOUNDS = [
+    (-5.0,  5.0),   # Km  (can be negative — motion opposition)
+    (0.0,   5.0),   # Tsc1
+    (0.01,  5.0),   # Tsc2
+    (0.01,  5.0),   # Tsc3
+    (0.01,  0.5),   # tau_m  [s]
+    (5.0,  25.0),   # omega_nm  [rad/s]
+    (0.1,   1.0),   # zeta_nm
+]
+
+def _mid(bounds):
+    return np.array([(lo + hi) / 2 for lo, hi in bounds], dtype=float)
+
+
+VIS_X0 = _mid(VIS_BOUNDS)
+VEST_X0 = _mid(VEST_BOUNDS)
+
+N_STARTS = 30
+RNG = np.random.default_rng(42)
+
+
+def random_x0(bounds):
+    """Draw a random initial point uniformly within bounds."""
+    return np.array([RNG.uniform(lo, hi) for lo, hi in bounds], dtype=float)
+
 
 def initialization(condition):
     """Return initial guess and bounds for a given condition."""
     motion = condition in [4, 5, 6]
 
     if motion:
-        x0 = np.array([
-            10,   # Kp
-            1,   # TL
-            2.5,   # TI
-            0.25,   # tau
-            15.0,  # omega_nm_vis
-            0.5,   # zeta_nm_vis
-            0,   # Km
-            2.5,   # Tsc1
-            2.5,   # Tsc2
-            2.5,   # Tsc3
-            0.25,   # tau_m
-            15,  # omega_nm_vest
-            0.5,   # zeta_nm_vest
-        ])
-
-        bounds = [
-            (1e-6, None),  # Kp
-            (1e-6, None),  # TL
-            (1e-6, None),  # TI
-            (0.0, None),   # tau
-            (1e-6, None),  # omega_nm_vis
-            (1e-6, None),  # zeta_nm_vis
-            (1e-6, None),  # Km
-            (1e-6, None),  # Tsc1
-            (1e-6, None),  # Tsc2
-            (1e-6, None),  # Tsc3
-            (0.0, None),   # tau_m
-            (1e-6, None),  # omega_nm_vest
-            (1e-6, None),  # zeta_nm_vest
-        ]
+        x0 = np.concatenate([VIS_X0, VEST_X0])
+        bounds = VIS_BOUNDS + VEST_BOUNDS
     else:
-        x0 = np.array([
-            10,   # Kp
-            1,   # TL
-            2.5,   # TI
-            0.25,   # tau
-            15.0,  # omega_nm_vis
-            0.5,   # zeta_nm_vis
-        ])
-
-        bounds = [
-            (1e-6, None),  # Kp
-            (1e-6, None),  # TL
-            (1e-6, None),  # TI
-            (0.0, None),   # tau
-            (1e-6, None),  # omega_nm_vis
-            (1e-6, None),  # zeta_nm_vis
-        ]
+        x0 = VIS_X0.copy()
+        bounds = VIS_BOUNDS.copy()
 
     return x0, bounds
 
@@ -144,10 +137,8 @@ def initialization(condition):
 def parameter_names(condition):
     """Return ordered parameter names for a given condition."""
     base_names = ['Kp', 'TL', 'TI', 'tau', 'omega_nm_vis', 'zeta_nm_vis']
-
     if condition in [4, 5, 6]:
         base_names += ['Km', 'Tsc1', 'Tsc2', 'Tsc3', 'tau_m', 'omega_nm_vest', 'zeta_nm_vest']
-
     return base_names
 
 
@@ -155,12 +146,9 @@ def parameter_names(condition):
 # FITTING
 # ==============================================================================
 
-
-
-
-def fit_subject_condition(subject, condition, weight_vis=1.0, weight_vest=1.0):
+def fit_subject_condition(subject, condition, weight_vis=1.0, weight_vest=1.0, verbose=True):
     """
-    Fit model parameters for a given subject and condition.
+    Fit model parameters for a given subject and condition using multistart optimization.
 
     Returns
     -------
@@ -168,10 +156,10 @@ def fit_subject_condition(subject, condition, weight_vis=1.0, weight_vest=1.0):
         Fitted visual model frequency response.
     vest_fit : np.ndarray or None
         Fitted vestibular model frequency response for motion conditions.
+    result : OptimizeResult
+        Best scipy optimization result.
     final_cost : float
         Final value of the objective function.
-    result : OptimizeResult
-        Full scipy optimization result.
     """
     motion = condition in [4, 5, 6]
 
@@ -180,34 +168,63 @@ def fit_subject_condition(subject, condition, weight_vis=1.0, weight_vest=1.0):
     except KeyError as e:
         raise KeyError(f"Missing dataset entry for subject={subject}, condition={condition}") from e
 
-    w_FC = np.asarray(rec['w_FC'])
-    vis_data = np.asarray(rec['Hpe_FC'])
-    vest_data = np.asarray(rec['Hpxd_FC']) if motion else None
+    w = np.asarray(rec["w_FC"]).ravel().astype(float)
+    vis_data = np.asarray(rec["Hpe_FC"]).ravel()
+    vest_data = np.asarray(rec["Hpxd_FC"]).ravel() if motion else None
 
-    x0, bounds = initialization(condition)
+    x0_base, bounds = initialization(condition)
 
-    result = opt.minimize(
-        cost_function,
-        x0=x0,
-        args=(w_FC, vis_data, vest_data, condition, weight_vis, weight_vest),
-        method='L-BFGS-B',   # supports bounds
-        # bounds=bounds,
-    )
+    best_cost = np.inf
+    best_params = None
+    best_result = None
 
-    fitted_params = result.x
+    starts = [x0_base] + [random_x0(bounds) for _ in range(N_STARTS - 1)]
 
-    # Build fitted responses
-    visual_fit = Hpe_model(w_FC, *fitted_params[:6])
-    vest_fit = Hpxd_model(w_FC, *fitted_params[6:]) if motion else None
+    for x0 in starts:
+        try:
+            res = opt.minimize(
+                cost_function,
+                x0=x0,
+                args=(w, vis_data, vest_data, condition, weight_vis, weight_vest),
+                method="L-BFGS-B",
+                bounds=bounds,
+                options={"maxiter": 2000, "ftol": 1e-12, "gtol": 1e-8},
+            )
 
-    # Store fitted parameters
+            if np.isfinite(res.fun) and res.fun < best_cost:
+                best_cost = res.fun
+                best_params = res.x
+                best_result = res
+
+        except Exception:
+            continue
+
+    if best_result is None:
+        raise RuntimeError(f"Optimisation failed for subject {subject}, condition {condition}")
+
+    fitted_params = best_params
+
+    visual_fit = Hpe_model(w, *fitted_params[:6])
+    vest_fit = Hpxd_model(w, *fitted_params[6:]) if motion else None
+
     names = parameter_names(condition)
-    dataset[subject][condition]['fitted_params'] = dict(zip(names, fitted_params))
-    dataset[subject][condition]['fit_cost'] = result.fun
-    dataset[subject][condition]['fit_success'] = result.success
-    dataset[subject][condition]['fit_message'] = result.message
+    dataset[subject][condition]["fitted_params"] = dict(zip(names, fitted_params))
+    dataset[subject][condition]["fit_cost"] = best_cost
+    dataset[subject][condition]["fit_success"] = best_result.success
+    dataset[subject][condition]["fit_message"] = best_result.message
 
-    return visual_fit, vest_fit, result, result.fun
+    if verbose:
+        print(f"  Subj {subject}, Cond {condition}  →  cost = {best_cost:.4f}")
+
+    return visual_fit, vest_fit, best_result, best_cost
+
+
+
+
+
+
+visual_fit, vest_fit, result, result.fun = fit_subject_condition(1,4)
+
 
 
 def fmin_minimise(subject, condition):
@@ -240,7 +257,3 @@ def fmin_minimise(subject, condition):
     x0, bounds = initialization(condition)
     
     return
-    
-
-
-    

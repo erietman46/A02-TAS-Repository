@@ -4,6 +4,8 @@ import numpy as np
 import scipy as sci
 # from control.matlab import *
 from Datasetcode import dataset
+import Optimizedpilotfitting_official as opf
+
 
 '''
 TIME HISTORIES 
@@ -33,12 +35,29 @@ MEASURED PILOT FREQUENCY RESPONSES
 ## BODE PLOTS FOR PILOT RESPONSES
 #__________________________________________________
 
+
+def bode_mag_phase(H):
+    """Return magnitude in dB and unwrapped phase in degrees."""
+    H_abs = np.abs(H)
+    H_db = 20 * np.log10(H_abs)
+    H_ang = np.angle(H, deg=True)
+    H_ang = np.unwrap(H_ang, period=360, axis=0)
+    return H_db, H_ang
+
+
+costs = []
+
 # loop for pilot
 for i in range(1,7):
 
 # loop for experiments
     for j in range(1,7):
         
+
+        motion = j in [4,5,6]
+
+
+
         #Absolute values of pilot responses
         H_pe_abs = abs(dataset[i][j]["Hpe_FC"])
         Hpxd_abs = abs(dataset[i][j]["Hpxd_FC"])
@@ -60,6 +79,77 @@ for i in range(1,7):
     
         plt.figure(figsize=(10, 4))
 
+        #Try fitted models
+        visual_fit, vestib_fit, result, cost= opf.fit_subject_condition(i, j)
+        visual_fit_db, visual_fit_ang = bode_mag_phase(visual_fit)
+
+        #Append costs to list
+        costs.append(cost)
+
+        # ==========================================================
+        # VISUAL BODE PLOT
+        # ==========================================================
+
+        plt.figure(figsize=(10, 4))
+
+        plt.subplot(1, 2, 1)
+        plt.semilogx(w_FC, H_pe_db, 'o', label="Measured Hpe")
+        plt.semilogx(w_FC, visual_fit_db, '-', label="Fitted Hpe")
+        plt.xlabel("Frequency [rad/s]")
+        plt.ylabel("Magnitude [dB]")
+        plt.title(f"Visual Bode Plot - Subject {i}, Condition {j}")
+        plt.grid(True, which="both")
+        plt.legend()
+
+        plt.subplot(1, 2, 2)
+        plt.semilogx(w_FC, H_pe_ang, 'o', label="Measured Hpe")
+        plt.semilogx(w_FC, visual_fit_ang, '-', label="Fitted Hpe")
+        plt.xlabel("Frequency [rad/s]")
+        plt.ylabel("Phase [deg]")
+        plt.title(f"Visual Bode Plot - Subject {i}, Condition {j}")
+        plt.grid(True, which="both")
+        plt.legend()
+
+        plt.tight_layout()
+        plt.savefig(f"FIGURES/subject_{i}_condition_{j}_visual.png", dpi=200)
+        plt.close()
+
+        # ==========================================================
+        # VESTIBULAR BODE PLOT (MOTION CONDITIONS ONLY)
+        # ==========================================================
+        if motion:
+            Hpxd = dataset[i][j]["Hpxd_FC"]
+            Hpxd_db, Hpxd_ang = bode_mag_phase(Hpxd)
+
+            vestib_fit_db, vest_fit_ang = bode_mag_phase(vestib_fit)
+
+            plt.figure(figsize=(10, 4))
+
+            plt.subplot(1, 2, 1)
+            plt.semilogx(w_FC, Hpxd_db, 's', label="Measured Hpxd")
+            plt.semilogx(w_FC, vestib_fit_db, '-', label="Fitted Hpxd")
+            plt.xlabel("Frequency [rad/s]")
+            plt.ylabel("Magnitude [dB]")
+            plt.title(f"Vestibular Bode Plot - Subject {i}, Condition {j}")
+            plt.grid(True, which="both")
+            plt.legend()
+
+            plt.subplot(1, 2, 2)
+            plt.semilogx(w_FC, Hpxd_ang, 's', label="Measured Hpxd")
+            plt.semilogx(w_FC, vest_fit_ang, '-', label="Fitted Hpxd")
+            plt.xlabel("Frequency [rad/s]")
+            plt.ylabel("Phase [deg]")
+            plt.title(f"Vestibular Bode Plot - Subject {i}, Condition {j}")
+            plt.grid(True, which="both")
+            plt.legend()
+
+            plt.tight_layout()
+            plt.savefig(f"FIGURES/subject_{i}_condition_{j}_vestibular.png", dpi=200)
+            plt.close()
+
+        print(f"Finished Subject {i}, Condition {j}, Cost = {cost:.4f}")
+
+        """""
         # Magnitude plot
         plt.subplot(1, 2, 1)
         plt.semilogx(w_FC, H_pe_db, 'o', label="Hpe")
@@ -84,6 +174,8 @@ for i in range(1,7):
         plt.savefig(f"FIGURES/Subject {i}, Condition {j}")
         plt.close()
         # plt.show()
+
+        """
 
 
 #Code to be able to call a single pilot and condition Bode plot
@@ -137,3 +229,8 @@ def plot_single_pilot_and_conditon(i,j):
         plt.savefig(f"FIGURES/Subject {i}, Condition {j}")
         plt.close()
         # plt.show()
+
+
+#Print costs summary
+npcosts = np.array(costs)
+print('mean:', np.mean(npcosts), '\n max:', np.max(npcosts), '\n min', np.min(npcosts))
