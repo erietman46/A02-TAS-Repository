@@ -1,5 +1,6 @@
 from preprocessing import pilots
 import numpy as np
+import pandas as pd
 
 crossings = [[0]*6 for _ in range(6)]
 for index, pilot in enumerate(pilots):
@@ -16,4 +17,9 @@ for index, pilot in enumerate(pilots):
                     cross += 1
         crossings[index][index2] = cross/5
 
-print(crossings)
+df = pd.DataFrame(
+    crossings,
+    index=[f"Pilot {i+1}" for i in range(6)],
+    columns=[f"C{i+1}" for i in range(6)]
+)
+print(f"\nMean Zero-crossings: \n{df}")
