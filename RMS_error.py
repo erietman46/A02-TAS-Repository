@@ -1,5 +1,7 @@
 from preprocessing import pilots
+import statistics
 import numpy as np
+import pandas as pd
 
 #Array to store RMS errors
 errors = np.zeros((6,6))
@@ -30,4 +32,16 @@ for i in range(len(pilots)):
         errors[i,j] = MSE
         
 #An array which the rows are pilots and columns are conditions
-print(errors)
+df = pd.DataFrame(
+    errors,
+    index=[f"Pilot {i+1}" for i in range(6)],
+    columns=[f"C{i+1}" for i in range(6)]
+)
+print(f"\nMean RMS: \n{df}")
+res = statistics.statistics(np.array(errors))
+results = pd.DataFrame(
+    res,
+    index=[f"C{i+1}" for i in range(3)],
+    columns=["p_val", "effect_size"]
+)
+print(f"\nStatistical Results: \n{results}")
