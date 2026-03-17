@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 """
-Optimized LSTM classifier for motion-on vs motion-off behavior in the AE2224-I dataset.
+Balanced-speed LSTM classifier for motion-on vs motion-off behavior in the AE2224-I dataset.
 
 Main speed improvements
 -----------------------
@@ -1220,6 +1220,38 @@ def run_vehicle_experiment(
 
     run_lookup_all, candidate_cache_all = build_candidate_cache(runs_for_vehicle, config)
 
+    global_best_input_vars: Optional[Tuple[str, ...]] = None
+    global_best_window_size: Optional[int] = None
+    global_selected_num_epochs: Optional[int] = None
+
+    if bool(config.global_tune_once_per_vehicle):
+        print(f"\nVehicle {vehicle_type}: running one shared hyperparameter search across all pilots")
+        filtered_candidate_cache = {
+            key: value for key, value in candidate_cache_all.items()
+            if all(value["rows_by_pilot"].get(pilot, []) for pilot in pilot_ids)
+        }
+        if not filtered_candidate_cache:
+            raise ValueError(f"Vehicle {vehicle_type}: no candidate setting had data for every pilot.")
+
+        best_row, _, _ = run_inner_cv_hyperparameter_search(
+            train_pilot_ids=pilot_ids,
+            vehicle_type=vehicle_type,
+            config=config,
+            device=device,
+            run_lookup=run_lookup_all,
+            candidate_cache=filtered_candidate_cache,
+            tracker=tracker,
+        )
+        global_best_input_vars = tuple(str(best_row["input_vars"]).split(","))
+        global_best_window_size = int(best_row["window_size"])
+        global_selected_num_epochs = max(1, int(round(float(best_row["mean_best_epoch"]))))
+
+        print(
+            f"Vehicle {vehicle_type}: shared setting selected -> "
+            f"window={global_best_window_size}, vars={','.join(global_best_input_vars)}, "
+            f"epochs={global_selected_num_epochs}"
+        )
+
     for test_pilot in pilot_ids:
         outer_train_pilots = [p for p in pilot_ids if p != test_pilot]
         outer_train_runs = [r for r in runs_for_vehicle if str(r["pilot_id"]) != str(test_pilot)]
@@ -1228,24 +1260,31 @@ def run_vehicle_experiment(
             continue
 
         print(f"\nVehicle {vehicle_type}: outer fold test pilot = {test_pilot}")
-        outer_train_pilots = [p for p in pilot_ids if p != test_pilot]
-        filtered_candidate_cache = {
-            key: value for key, value in candidate_cache_all.items()
-            if all(value["rows_by_pilot"].get(pilot, []) for pilot in outer_train_pilots + [test_pilot])
-        }
-        best_row, _, _ = run_inner_cv_hyperparameter_search(
-            train_pilot_ids=outer_train_pilots,
-            vehicle_type=vehicle_type,
-            config=config,
-            device=device,
-            run_lookup=run_lookup_all,
-            candidate_cache=filtered_candidate_cache,
-            tracker=tracker,
-        )
 
-        best_input_vars = tuple(str(best_row["input_vars"]).split(","))
-        best_window_size = int(best_row["window_size"])
-        selected_num_epochs = max(1, int(round(float(best_row["mean_best_epoch"]))))
+        if bool(config.global_tune_once_per_vehicle):
+            assert global_best_input_vars is not None
+            assert global_best_window_size is not None
+            assert global_selected_num_epochs is not None
+            best_input_vars = global_best_input_vars
+            best_window_size = global_best_window_size
+            selected_num_epochs = global_selected_num_epochs
+        else:
+            filtered_candidate_cache = {
+                key: value for key, value in candidate_cache_all.items()
+                if all(value["rows_by_pilot"].get(pilot, []) for pilot in outer_train_pilots + [test_pilot])
+            }
+            best_row, _, _ = run_inner_cv_hyperparameter_search(
+                train_pilot_ids=outer_train_pilots,
+                vehicle_type=vehicle_type,
+                config=config,
+                device=device,
+                run_lookup=run_lookup_all,
+                candidate_cache=filtered_candidate_cache,
+                tracker=tracker,
+            )
+            best_input_vars = tuple(str(best_row["input_vars"]).split(","))
+            best_window_size = int(best_row["window_size"])
+            selected_num_epochs = max(1, int(round(float(best_row["mean_best_epoch"]))))
 
         candidate_entry = candidate_cache_all[(best_input_vars, best_window_size)]
         train_rows = collect_rows_for_pilots(candidate_entry, outer_train_pilots)
@@ -1583,20 +1622,21 @@ if __name__ == "__main__":
         data_dir=Path(r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\data\\python_data"),
         save_dir=r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\results_lstm",
         window_sizes=(64, 96),
-        stride_fraction=1.0,
+        stride_fraction=0.75,
         input_combinations=(
             ("e", "u"),
+            ("e", "u", "de"),
             ("e", "u", "de", "du"),
         ),
         batch_size=512 if use_cuda else 128,
         eval_batch_size=4096 if use_cuda else 512,
-        hidden_size=48,
-        num_layers=1,
-        dropout=0.1,
+        hidden_size=64,
+        num_layers=2,
+        dropout=0.2,
         learning_rate=1e-3,
         weight_decay=1e-4,
-        max_epochs=20,
-        patience=4,
+        max_epochs=24,
+        patience=5,
         random_state=42,
         min_run_length=128,
         num_workers=4 if use_cuda else 0,
@@ -1608,11 +1648,11 @@ if __name__ == "__main__":
         allow_tf32=use_cuda,
         cudnn_benchmark=use_cuda,
         compile_model=False,
-        val_check_interval=3,
-        stage1_enabled=False,
+        val_check_interval=2,
+        stage1_enabled=True,
         stage1_epochs=6,
         stage1_patience=2,
-        stage1_top_k=2,
+        stage1_top_k=3,
         global_tune_once_per_vehicle=True,
     )
     main(config)
