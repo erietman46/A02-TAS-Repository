@@ -1237,10 +1237,8 @@ def main(config: TrainConfig) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    base_dir = Path(__file__).resolve().parent
     config = TrainConfig(
-        data_dir=base_dir / "data" / "python_data",
-        save_dir=base_dir / "results_lstm",
+        data_dir=Path(r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\data\\python_data"),
         window_sizes=(32, 64, 96, 128),
         stride_fraction=0.5,
         input_combinations=(
@@ -1249,7 +1247,7 @@ if __name__ == "__main__":
             ("e", "u", "du"),
             ("e", "u", "de", "du"),
         ),
-        batch_size=256,
+        batch_size=128,
         hidden_size=64,
         num_layers=2,
         dropout=0.2,
@@ -1260,8 +1258,6 @@ if __name__ == "__main__":
         random_state=42,
         min_run_length=128,
         num_workers=0,
-        device="cuda",
-        use_mixed_precision=True,
-        pin_memory=True,
+        save_dir=Path(r"C:\\Users\\bramb\\Downloads\\AI_project_simulator\\A02-TAS-Repository\\results_lstm"),
     )
     main(config)
