@@ -38,7 +38,7 @@ C3 = acceleration, no motion
 C4 = positions, motion
 C5 = velocity, motion
 C6 = acceleration, motion
-'''
+
 
 for subject in range(1, 7):
     for condition in range(1, 7):
@@ -59,7 +59,6 @@ for subject in range(1, 7):
             "mean_accelerations": mean_accelerations
         }
 
-'''
 d11 = np.load("data/python_data/ae2224I_measurement_data_subj1_C1.npz")
 d12 = np.load("data/python_data/ae2224I_measurement_data_subj1_C2.npz")
 d13 = np.load("data/python_data/ae2224I_measurement_data_subj1_C3.npz")
