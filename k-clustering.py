@@ -6,6 +6,13 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import AgglomerativeClustering
 from scipy.cluster.hierarchy import dendrogram, linkage
 
+def dydx_rms(y, x):
+    dy = np.diff(y)
+    dx = np.diff(x)
+    dydx = dy / dx
+    return np.sqrt(np.mean(dydx ** 2))
+
+
 data = {}
 for subject in range(1, 7):
     globals()[f"P{subject}"] = []
@@ -22,11 +29,8 @@ for subject in range(1, 7):
             i_th_item = data_e_array[:, i]
             e_rms_i = np.sqrt(np.mean(i_th_item ** 2))
             e_rms.append(e_rms_i)
-            de = np.diff(i_th_item)
-            dt = np.diff(data_t_array)
-            de_dt_i = de / dt
-            de_dt_i = np.sqrt(np.mean(de_dt_i ** 2))
-            de_dt_rms.append(de_dt_i)
+            de_dt = dydx_rms(i_th_item, data_t_array)
+            de_dt_rms.append(de_dt)
 
         data_u = data_temp["u"]
         data_u_array = np.array(data_u)
@@ -37,14 +41,11 @@ for subject in range(1, 7):
             i_th_item = data_u_array[:, i]
             u_rms_i = np.sqrt(np.mean(i_th_item ** 2))
             u_rms.append(u_rms_i)
-            du = np.diff(i_th_item)
-            dt = np.diff(data_t_array)
-            du_dt_i = du / dt
-            du_dt_i = np.sqrt(np.mean(du_dt_i ** 2))
-            du_dt_rms.append(du_dt_i)
+            du_dt = dydx_rms(i_th_item, data_t_array)
+            du_dt_rms.append(du_dt)
 
-        globals() [f"C1{condition}"] = [e_rms, u_rms, de_dt_rms, du_dt_rms]
-        globals()[f"P{subject}"].append(globals() [f"C1{condition}"])
+        globals() [f"C{condition}"] = [e_rms, u_rms, de_dt_rms, du_dt_rms]
+        globals() [f"P{subject}"].append(globals() [f"C{condition}"])
 
     data[f"Pilot{subject}"] = globals()[f"P{subject}"]
 
