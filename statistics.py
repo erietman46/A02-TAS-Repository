@@ -43,9 +43,13 @@ def statistics(metric):
         if shapiro_test.pvalue > 0.05:
             # Paired t-test
             p_val, effect_size = paired_t(mo, no)
+            if p_val < 0.05:
+                print("Significant result coming up!")
         else:
             # Wilcoxon signed-rank test
             p_val, effect_size = wilcoxon(mo, no)
+            if p_val < 0.05:
+                print("Significant result coming up!")
 
         # Store results
         results[k] = [float(p_val), float(effect_size)]
