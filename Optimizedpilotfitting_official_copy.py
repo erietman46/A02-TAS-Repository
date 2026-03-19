@@ -33,7 +33,7 @@ def Hsc_model(w, Tsc1, Tsc2, Tsc3):
     return (1 + Tsc1 * s) / ((1 + Tsc2 * s) * (1 + Tsc3 * s))
 
 
-def Hpxd_model(w, Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm, zeta_nm):
+def Hpxd_model(w, omega_nm, zeta_nm, Km, Tsc1, Tsc2, Tsc3, tau_m):
     """
     Vestibular pilot model (Hpxd).
     Params: Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm, zeta_nm
@@ -64,16 +64,16 @@ def cost_function(params, w, vis_data, vest_data, condition, weight_vis=1.0, wei
     Cost is a normalised sum of squared errors in the complex frequency domain.
     """
     # --- Visual params (always present) ---
-    Kp, TL, TI, tau, omega_nm_vis, zeta_nm_vis = params[:6]
+    Kp, TL, TI, tau, omega_nm, zeta_nm = params[:6]
 
-    vis_model = Hpe_model(w, Kp, TL, TI, tau, omega_nm_vis, zeta_nm_vis)
+    vis_model = Hpe_model(w, Kp, TL, TI, tau, omega_nm, zeta_nm)
     err_vis = np.abs(vis_data - vis_model)**2 / (np.abs(vis_data)**2 + 1e-12)
     cost = weight_vis * np.sum(err_vis)
 
     # --- Vestibular params (motion conditions only) ---
     if condition in [4, 5, 6]:
-        Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm_vest, zeta_nm_vest = params[6:]
-        vest_model = Hpxd_model(w, Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm_vest, zeta_nm_vest)
+        omega_nm, zeta_nm, Km, Tsc1, Tsc2, Tsc3, tau_m = params[4:]
+        vest_model = Hpxd_model(w, omega_nm, zeta_nm, Km, Tsc1, Tsc2, Tsc3, tau_m )
         err_vest = np.abs(vest_data - vest_model)**2 / (np.abs(vest_data)**2 + 1e-12)
         cost += weight_vest * np.sum(err_vest)
 
@@ -101,8 +101,6 @@ VEST_BOUNDS = [
     (5.924,  5.924),   # Tsc2
     (0.005,  0.005),   # Tsc3
     (0.01,  1.5),   # tau_m  [s]
-    (0.0,  35.0),   # omega_nm  [rad/s]
-    (-1.0, 5.0),   # zeta_nm
 ]
 
 def _mid(bounds):
@@ -112,8 +110,8 @@ def _mid(bounds):
 VIS_X0 = _mid(VIS_BOUNDS)
 VEST_X0 = _mid(VEST_BOUNDS)
 
-N_STARTS = 30
-RNG = np.random.default_rng(80) # use seed 42 for reproducibility
+N_STARTS = 10000  # Number of multistart initial points (including the mid-point)
+RNG = np.random.default_rng(42) # use seed 42 for reproducibility
 
 
 def random_x0(bounds):
@@ -137,9 +135,9 @@ def initialization(condition):
 
 def parameter_names(condition):
     """Return ordered parameter names for a given condition."""
-    base_names = ['Kp', 'TL', 'TI', 'tau', 'omega_nm_vis', 'zeta_nm_vis']
+    base_names = ['Kp', 'TL', 'TI', 'tau', 'omega_nm', 'zeta_nm']
     if condition in [4, 5, 6]:
-        base_names += ['Km', 'Tsc1', 'Tsc2', 'Tsc3', 'tau_m', 'omega_nm_vest', 'zeta_nm_vest']
+        base_names += ['Km', 'Tsc1', 'Tsc2', 'Tsc3', 'tau_m' ]
     return base_names
 
 
@@ -206,7 +204,7 @@ def fit_subject_condition(subject, condition, weight_vis=1.0, weight_vest=1.0, v
     fitted_params = best_params
 
     visual_fit = Hpe_model(w, *fitted_params[:6])
-    vest_fit = Hpxd_model(w, *fitted_params[6:]) if motion else None
+    vest_fit = Hpxd_model(w, *fitted_params[4:]) if motion else None
 
     names = parameter_names(condition)
     dataset[subject][condition]["fitted_params"] = dict(zip(names, fitted_params))
