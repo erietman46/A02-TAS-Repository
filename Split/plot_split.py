@@ -45,18 +45,17 @@ def bode_mag_phase(H):
     return H_db, H_ang
 
 
-costs = []
+# Separate cost tracking
+visual_costs = []
+vestib_costs = []
 
 # loop for pilot
-for i in range(1,7):
+for i in range(1, 7):
 
-# loop for experiments
-    for j in range(1,7):
-        
+    # loop for experiments
+    for j in range(1, 7):
 
-        motion = j in [4,5,6]
-
-
+        motion = j in [4, 5, 6]
 
         #Absolute values of pilot responses
         H_pe_abs = abs(dataset[i][j]["Hpe_FC"])
@@ -76,15 +75,15 @@ for i in range(1,7):
 
         #Pilot response frequencies
         w_FC = dataset[i][j]["w_FC"]
-    
-        plt.figure(figsize=(10, 4))
 
-        #Try fitted models
-        visual_fit, vestib_fit, result, cost= opf.fit_subject_condition(i, j)
+        # Try fitted models
+        visual_fit, vestib_fit, best_vis_result, best_vest_result = opf.fit_subject_condition(i, j)
+
+        # Visual cost (always available)
+        vis_cost = best_vis_result.fun
+        visual_costs.append(vis_cost)
+
         visual_fit_db, visual_fit_ang = bode_mag_phase(visual_fit)
-
-        #Append costs to list
-        costs.append(cost)
 
         # ==========================================================
         # VISUAL BODE PLOT
@@ -121,7 +120,11 @@ for i in range(1,7):
             Hpxd = dataset[i][j]["Hpxd_FC"]
             Hpxd_db, Hpxd_ang = bode_mag_phase(Hpxd)
 
-            vestib_fit_db, vest_fit_ang = bode_mag_phase(vestib_fit)
+            vestib_fit_db, vestib_fit_ang = bode_mag_phase(vestib_fit)
+
+            # Vestibular cost (only for motion)
+            vest_cost = best_vest_result.fun
+            vestib_costs.append(vest_cost)
 
             plt.figure(figsize=(10, 4))
 
@@ -136,7 +139,7 @@ for i in range(1,7):
 
             plt.subplot(1, 2, 2)
             plt.semilogx(w_FC, Hpxd_ang, 's', label="Measured Hpxd")
-            plt.semilogx(w_FC, vest_fit_ang, '-', label="Fitted Hpxd")
+            plt.semilogx(w_FC, vestib_fit_ang, '-', label="Fitted Hpxd")
             plt.xlabel("Frequency [rad/s]")
             plt.ylabel("Phase [deg]")
             plt.title(f"Vestibular Bode Plot - Subject {i}, Condition {j}")
@@ -147,35 +150,30 @@ for i in range(1,7):
             plt.savefig(f"FIGURES/subject_{i}_condition_{j}_vestibular.png", dpi=200)
             plt.close()
 
-        print(f"Finished Subject {i}, Condition {j}, Cost = {cost:.4f}")
+            print(f"Finished Subject {i}, Condition {j}, Visual Cost = {vis_cost:.4f}, Vestib Cost = {vest_cost:.4f}")
+        else:
+            print(f"Finished Subject {i}, Condition {j}, Visual Cost = {vis_cost:.4f}")
 
-        """""
-        # Magnitude plot
-        plt.subplot(1, 2, 1)
-        plt.semilogx(w_FC, H_pe_db, 'o', label="Hpe")
-        plt.semilogx(w_FC, Hpxd_db, 's', label="Hpxd")
-        plt.xlabel("Frequency [rad/s]")
-        plt.ylabel("Magnitude [dB]")
-        plt.title(f"Subject {i}, Condition {j}")
-        plt.grid(True, which="both")
-        plt.legend()
 
-        # Phase plot
-        plt.subplot(1, 2, 2)
-        plt.semilogx(w_FC, H_pe_ang, 'o', label="Hpe")
-        plt.semilogx(w_FC, Hpxd_ang, 's', label="Hpxd")
-        plt.xlabel("Frequency [rad/s]")
-        plt.ylabel("Phase [deg]")
-        plt.title(f"Subject {i}, Condition {j}")
-        plt.grid(True, which="both")
-        plt.legend()
+# Print cost summaries
+visual_costs = np.array(visual_costs)
+print(
+    "VISUAL COSTS\n"
+    f"mean: {np.mean(visual_costs)}\n"
+    f"max:  {np.max(visual_costs)}\n"
+    f"min:  {np.min(visual_costs)}"
+)
 
-        plt.tight_layout()
-        plt.savefig(f"FIGURES/Subject {i}, Condition {j}")
-        plt.close()
-        # plt.show()
-
-        """
+if len(vestib_costs) > 0:
+    vestib_costs = np.array(vestib_costs)
+    print(
+        "\nVESTIBULAR COSTS (motion conditions only: 4-6)\n"
+        f"mean: {np.mean(vestib_costs)}\n"
+        f"max:  {np.max(vestib_costs)}\n"
+        f"min:  {np.min(vestib_costs)}"
+    )
+else:
+    print("\nVESTIBULAR COSTS: none collected (no motion conditions processed).")
 
 
 #Code to be able to call a single pilot and condition Bode plot
@@ -229,8 +227,3 @@ def plot_single_pilot_and_conditon(i,j):
         plt.savefig(f"FIGURES/Subject {i}, Condition {j}")
         plt.close()
         # plt.show()
-
-
-#Print costs summary
-npcosts = np.array(costs)
-print('mean:', np.mean(npcosts), '\n max:', np.max(npcosts), '\n min', np.min(npcosts))

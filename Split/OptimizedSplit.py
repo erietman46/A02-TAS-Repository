@@ -46,38 +46,23 @@ def Hpxd_model(w, Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm, zeta_nm):
 
 
 # ==============================================================================
-# COST FUNCTION
+# COST FUNCTIONS
 # ==============================================================================
 
-def cost_function(params, w, vis_data, vest_data, condition, weight_vis=1.0, weight_vest=1.0):
-    """
-    Joint cost function over visual and vestibular models.
-
-    Parameter vector layout depends on condition:
-      - No-motion (C1-C3): only visual params are meaningful.
-        params = [Kp, TL, TI, tau, omega_nm_vis, zeta_nm_vis]
-      - Motion (C4-C6): visual + vestibular params fitted together.
-        params = [Kp, TL, TI, tau, omega_nm_vis, zeta_nm_vis,
-                  Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm_vest, zeta_nm_vest]
-
-    Neuromuscular parameters are fitted independently for each model.
-    Cost is a normalised sum of squared errors in the complex frequency domain.
-    """
-    # --- Visual params (always present) ---
-    Kp, TL, TI, tau, omega_nm_vis, zeta_nm_vis = params[:6]
-
+def visual_cost(params, w, vis_data):
+    """Scalar cost for visual model only."""
+    Kp, TL, TI, tau, omega_nm_vis, zeta_nm_vis = params
     vis_model = Hpe_model(w, Kp, TL, TI, tau, omega_nm_vis, zeta_nm_vis)
     err_vis = np.abs(vis_data - vis_model)**2 / (np.abs(vis_data)**2 + 1e-12)
-    cost = weight_vis * np.sum(err_vis)
+    return float(np.real(np.sum(err_vis)))
 
-    # --- Vestibular params (motion conditions only) ---
-    if condition in [4, 5, 6]:
-        Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm_vest, zeta_nm_vest = params[6:]
-        vest_model = Hpxd_model(w, Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm_vest, zeta_nm_vest)
-        err_vest = np.abs(vest_data - vest_model)**2 / (np.abs(vest_data)**2 + 1e-12)
-        cost += weight_vest * np.sum(err_vest)
 
-    return float(np.real(cost))
+def vestibular_cost(params, w, vest_data):
+    """Scalar cost for vestibular model only."""
+    Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm_vest, zeta_nm_vest = params
+    vest_model = Hpxd_model(w, Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm_vest, zeta_nm_vest)
+    err_vest = np.abs(vest_data - vest_model)**2 / (np.abs(vest_data)**2 + 1e-12)
+    return float(np.real(np.sum(err_vest)))
 
 
 
@@ -86,9 +71,9 @@ def cost_function(params, w, vis_data, vest_data, condition, weight_vis=1.0, wei
 # ==============================================================================
 
 VIS_BOUNDS = [
-    (0.01, 10.0),   # Kp
-    (0.0,  0.8),    # TL
-    (0.01, 3.0),    # TI
+    (0.01, 20.0),   # Kp
+    (0.0,  2.0),    # TL
+    (0.01, 5.0),    # TI
     (0.01, 0.5),    # tau  [s]
     (5.0,  25.0),   # omega_nm  [rad/s]
     (0.1,  1.0),    # zeta_nm
@@ -97,12 +82,12 @@ VIS_BOUNDS = [
 # Vestibular (Hpxd) parameter bounds: Km, Tsc1, Tsc2, Tsc3, tau_m, omega_nm, zeta_nm
 VEST_BOUNDS = [
     (-5.0,  5.0),   # Km  (can be negative — motion opposition)
-    (0.11,   0.11),   # Tsc1
-    (5.924,  5.924),   # Tsc2
-    (0.005,  0.005),   # Tsc3
-    (0.01,  1.5),   # tau_m  [s]
-    (0.0,  35.0),   # omega_nm  [rad/s]
-    (-1.0, 5.0),   # zeta_nm
+    (0.0,   5.0),   # Tsc1
+    (0.01,  5.0),   # Tsc2
+    (0.01,  5.0),   # Tsc3
+    (0.01,  0.5),   # tau_m  [s]
+    (5.0,  25.0),   # omega_nm  [rad/s]
+    (0.1,   1.0),   # zeta_nm
 ]
 
 def _mid(bounds):
@@ -113,7 +98,7 @@ VIS_X0 = _mid(VIS_BOUNDS)
 VEST_X0 = _mid(VEST_BOUNDS)
 
 N_STARTS = 30
-RNG = np.random.default_rng(42) # use seed 42 for reproducibility
+RNG = np.random.default_rng(42)
 
 
 def random_x0(bounds):
@@ -147,20 +132,20 @@ def parameter_names(condition):
 # FITTING
 # ==============================================================================
 
-def fit_subject_condition(subject, condition, weight_vis=1.0, weight_vest=1.0, verbose=True):
+def fit_subject_condition(subject, condition, verbose=True):
     """
-    Fit model parameters for a given subject and condition using multistart optimization.
+    Fit visual and vestibular models separately for a given subject and condition.
 
     Returns
     -------
     visual_fit : np.ndarray
         Fitted visual model frequency response.
     vest_fit : np.ndarray or None
-        Fitted vestibular model frequency response for motion conditions.
-    result : OptimizeResult
-        Best scipy optimization result.
-    final_cost : float
-        Final value of the objective function.
+        Fitted vestibular model frequency response (None for no-motion conditions).
+    visual_result : OptimizeResult
+        Best optimization result for the visual model.
+    vest_result : OptimizeResult or None
+        Best optimization result for the vestibular model.
     """
     motion = condition in [4, 5, 6]
 
@@ -173,57 +158,101 @@ def fit_subject_condition(subject, condition, weight_vis=1.0, weight_vest=1.0, v
     vis_data = np.asarray(rec["Hpe_FC"]).ravel()
     vest_data = np.asarray(rec["Hpxd_FC"]).ravel() if motion else None
 
-    x0_base, bounds = initialization(condition)
+    # -----------------------------
+    # Visual fit
+    # -----------------------------
+    best_vis_cost = np.inf
+    best_vis_result = None
+    best_vis_params = None
 
-    best_cost = np.inf
-    best_params = None
-    best_result = None
+    vis_starts = [VIS_X0.copy()] + [random_x0(VIS_BOUNDS) for _ in range(N_STARTS - 1)]
 
-    starts = [x0_base] + [random_x0(bounds) for _ in range(N_STARTS - 1)]
-
-    for x0 in starts:
+    for x0 in vis_starts:
         try:
             res = opt.minimize(
-                cost_function,
+                visual_cost,
                 x0=x0,
-                args=(w, vis_data, vest_data, condition, weight_vis, weight_vest),
+                args=(w, vis_data),
                 method="L-BFGS-B",
-                bounds=bounds,
+                bounds=VIS_BOUNDS,
                 options={"maxiter": 2000, "ftol": 1e-12, "gtol": 1e-8},
             )
 
-            if np.isfinite(res.fun) and res.fun < best_cost:
-                best_cost = res.fun
-                best_params = res.x
-                best_result = res
-
+            if np.isfinite(res.fun) and res.fun < best_vis_cost:
+                best_vis_cost = res.fun
+                best_vis_result = res
+                best_vis_params = res.x
         except Exception:
             continue
 
-    if best_result is None:
-        raise RuntimeError(f"Optimisation failed for subject {subject}, condition {condition}")
+    if best_vis_result is None:
+        raise RuntimeError(f"Visual optimisation failed for subject {subject}, condition {condition}")
 
-    fitted_params = best_params
+    visual_fit = Hpe_model(w, *best_vis_params)
 
-    visual_fit = Hpe_model(w, *fitted_params[:6])
-    vest_fit = Hpxd_model(w, *fitted_params[6:]) if motion else None
+    # -----------------------------
+    # Vestibular fit
+    # -----------------------------
+    best_vest_cost = None
+    best_vest_result = None
+    best_vest_params = None
+    vest_fit = None
 
-    names = parameter_names(condition)
-    dataset[subject][condition]["fitted_params"] = dict(zip(names, fitted_params))
-    dataset[subject][condition]["fit_cost"] = best_cost
-    dataset[subject][condition]["fit_success"] = best_result.success
-    dataset[subject][condition]["fit_message"] = best_result.message
+    if motion:
+        best_vest_cost = np.inf
+        vest_starts = [VEST_X0.copy()] + [random_x0(VEST_BOUNDS) for _ in range(N_STARTS - 1)]
+
+        for x0 in vest_starts:
+            try:
+                res = opt.minimize(
+                    vestibular_cost,
+                    x0=x0,
+                    args=(w, vest_data),
+                    method="L-BFGS-B",
+                    bounds=VEST_BOUNDS,
+                    options={"maxiter": 2000, "ftol": 1e-12, "gtol": 1e-8},
+                )
+
+                if np.isfinite(res.fun) and res.fun < best_vest_cost:
+                    best_vest_cost = res.fun
+                    best_vest_result = res
+                    best_vest_params = res.x
+            except Exception:
+                continue
+
+        if best_vest_result is None:
+            raise RuntimeError(f"Vestibular optimisation failed for subject {subject}, condition {condition}")
+
+        vest_fit = Hpxd_model(w, *best_vest_params)
+
+    # -----------------------------
+    # Store results
+    # -----------------------------
+    rec["fitted_params_visual"] = dict(zip(
+        ['Kp', 'TL', 'TI', 'tau', 'omega_nm_vis', 'zeta_nm_vis'],
+        best_vis_params
+    ))
+    rec["fit_cost_visual"] = best_vis_cost
+    rec["fit_success_visual"] = best_vis_result.success
+    rec["fit_message_visual"] = best_vis_result.message
+
+    if motion:
+        rec["fitted_params_vestibular"] = dict(zip(
+            ['Km', 'Tsc1', 'Tsc2', 'Tsc3', 'tau_m', 'omega_nm_vest', 'zeta_nm_vest'],
+            best_vest_params
+        ))
+        rec["fit_cost_vestibular"] = best_vest_cost
+        rec["fit_success_vestibular"] = best_vest_result.success
+        rec["fit_message_vestibular"] = best_vest_result.message
 
     if verbose:
-        print(f"  Subj {subject}, Cond {condition}  →  cost = {best_cost:.4f}")
+        print(f"Subj {subject}, Cond {condition}")
+        print(f"  Visual cost     = {best_vis_cost:.4f}")
+        if motion:
+            print(f"  Vestibular cost = {best_vest_cost:.4f}")
 
-    return visual_fit, vest_fit, best_result, best_cost
+    return visual_fit, vest_fit, best_vis_result, best_vest_result
 
-
-
-
-
-visual_fit, vest_fit, result, result.fun = fit_subject_condition(1,4)
 
 
 

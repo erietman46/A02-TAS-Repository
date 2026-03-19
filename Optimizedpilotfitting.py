@@ -243,4 +243,3 @@ def fmin_minimise(subject, condition):
     
 
 
-    
