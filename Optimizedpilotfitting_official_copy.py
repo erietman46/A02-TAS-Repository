@@ -87,8 +87,8 @@ def cost_function(params, w, vis_data, vest_data, condition, weight_vis=1.0, wei
 
 VIS_BOUNDS = [
     (0.01, 10.0),   # Kp
-    (0.0,  0.8),    # TL
-    (0.01, 3.0),    # TI
+    (0.0,  3),    # TL
+    (0.01, 3.5),    # TI
     (0.01, 0.5),    # tau  [s]
     (5.0,  25.0),   # omega_nm  [rad/s]
     (0.1,  1.0),    # zeta_nm
@@ -110,8 +110,8 @@ def _mid(bounds):
 VIS_X0 = _mid(VIS_BOUNDS)
 VEST_X0 = _mid(VEST_BOUNDS)
 
-N_STARTS = 10000  # Number of multistart initial points (including the mid-point)
-RNG = np.random.default_rng(42) # use seed 42 for reproducibility
+N_STARTS = 10  # Number of multistart initial points (including the mid-point)
+RNG = np.random.default_rng(11) # use seed 42 for reproducibility
 
 
 def random_x0(bounds):
