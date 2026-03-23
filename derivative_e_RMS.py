@@ -2,7 +2,7 @@ from preprocessing import pilots
 import numpy as np
 import pandas as pd
 
-#Array to store RMS errors
+#Array to store RMS derivative of errors
 errors_d = np.zeros((6,6))
 time = pilots[0]["C1"]["t"]
 
