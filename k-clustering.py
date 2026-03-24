@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import numpy as np
-
 from sklearn import cluster, datasets
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import AgglomerativeClustering
@@ -25,6 +24,7 @@ data = {}
 
 for subject in range(1, 7):
     for condition in range(1, 7):
+
         data_temp = np.load(f"./data/python_data/ae2224I_measurement_data_subj{subject}_C{condition}.npz")
         data_t = data_temp["t"]
         data_t_array = np.array(data_t)
@@ -32,6 +32,7 @@ for subject in range(1, 7):
         data_e_array = np.array(data_e)
         e_rms = []
         de_dt_rms = []
+
         for i in range(data_e_array.shape[1]):
             i_th_item = data_e_array[:, i]
             e_rms_i = float(np.sqrt(np.mean(i_th_item ** 2)))
@@ -53,21 +54,12 @@ for subject in range(1, 7):
         data[(f"P{subject}_C{condition}")] = {"e": e_rms, "u": u_rms, "de_dt": de_dt_rms, "du_dt": du_dt_rms}
 
 combinations = (("e", "u"), ("e", "u", "de_dt"), ("e", "u", "du_dt"), ("e", "u", "de_dt", "du_dt"))
-Gain = []
-Velocity = []
-Acceleration = []
 
 for condition in range(1, 7):
     for pilot in range(1, 7):
         for combination in combinations:
             globals() [f"Combination_{combination}_P_{pilot}_C{condition}"] = [data[f"P{pilot}_C{condition}"][feature] for feature in combination]
-            if condition == 1 or condition == 4:
-                Gain.append(globals()[f"Combination_{combination}_P_{pilot}_C{condition}"])
-            elif condition == 2 or condition == 5:
-                Velocity.append(globals()[f"Combination_{combination}_P_{pilot}_C{condition}"])
-            elif condition == 3 or condition == 6:
-                Acceleration.append(globals()[f"Combination_{combination}_P_{pilot}_C{condition}"])
-
+            
 Gain_e_u = [globals()[f"Combination_('e', 'u')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
 Gain_e_u = np.array(Gain_e_u)
 Gain_e_u = reshape(Gain_e_u)
