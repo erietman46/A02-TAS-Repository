@@ -56,6 +56,7 @@ combinations = (("e", "u"), ("e", "u", "de_dt"), ("e", "u", "du_dt"), ("e", "u",
 Gain = []
 Velocity = []
 Acceleration = []
+
 for condition in range(1, 7):
     for pilot in range(1, 7):
         for combination in combinations:
@@ -83,7 +84,7 @@ Gain_e_u_du_dt = reshape(Gain_e_u_du_dt)
 Gain_e_u_du_dt = scale(Gain_e_u_du_dt)
 
 Gain_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
-Gain_e_u_de_dt_du_dt = np.array(Gain_e_u_de_dt_du_dt)2
+Gain_e_u_de_dt_du_dt = np.array(Gain_e_u_de_dt_du_dt)
 Gain_e_u_de_dt_du_dt = reshape(Gain_e_u_de_dt_du_dt)
 Gain_e_u_de_dt_du_dt = scale(Gain_e_u_de_dt_du_dt)
 
@@ -127,3 +128,11 @@ Acceleration_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_
 Acceleration_e_u_de_dt_du_dt = np.array(Acceleration_e_u_de_dt_du_dt)
 Acceleration_e_u_de_dt_du_dt = reshape(Acceleration_e_u_de_dt_du_dt)
 Acceleration_e_u_de_dt_du_dt = scale(Acceleration_e_u_de_dt_du_dt)
+
+hierarchical_clustering = AgglomerativeClustering(n_clusters=2, linkage = "ward")
+labels_e_u = hierarchical_clustering.fit_predict(Gain_e_u)
+labels_e_u_de_dt = hierarchical_clustering.fit_predict(Gain_e_u_de_dt)
+labels_e_u_du_dt = hierarchical_clustering.fit_predict(Gain_e_u_du_dt)
+labels_e_u_de_dt_du_dt = hierarchical_clustering.fit_predict(Gain_e_u_de_dt_du_dt)
+
+
