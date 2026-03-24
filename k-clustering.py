@@ -12,9 +12,18 @@ def dydx_rms(y, x):
     dydx = dy / dx
     return float(np.sqrt(np.mean(dydx ** 2)))
 
-data = {}
-for subject in range(1, 7):
+def reshape(array):
+    reshaped_array = array.reshape(-1, array.shape[-1])
+    return reshaped_array
 
+def scale(array):
+    scaler = StandardScaler()
+    scaled_array = scaler.fit_transform(array)
+    return scaled_array
+
+data = {}
+
+for subject in range(1, 7):
     for condition in range(1, 7):
         data_temp = np.load(f"./data/python_data/ae2224I_measurement_data_subj{subject}_C{condition}.npz")
         data_t = data_temp["t"]
@@ -60,26 +69,61 @@ for condition in range(1, 7):
 
 Gain_e_u = [globals()[f"Combination_('e', 'u')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
 Gain_e_u = np.array(Gain_e_u)
+Gain_e_u = reshape(Gain_e_u)
+Gain_e_u = scale(Gain_e_u)
+
 Gain_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
 Gain_e_u_de_dt = np.array(Gain_e_u_de_dt)
+Gain_e_u_de_dt = reshape(Gain_e_u_de_dt)
+Gain_e_u_de_dt = scale(Gain_e_u_de_dt)
+
 Gain_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
 Gain_e_u_du_dt = np.array(Gain_e_u_du_dt)
+Gain_e_u_du_dt = reshape(Gain_e_u_du_dt)
+Gain_e_u_du_dt = scale(Gain_e_u_du_dt)
+
 Gain_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
-Gain_e_u_de_dt_du_dt = np.array(Gain_e_u_de_dt_du_dt)
+Gain_e_u_de_dt_du_dt = np.array(Gain_e_u_de_dt_du_dt)2
+Gain_e_u_de_dt_du_dt = reshape(Gain_e_u_de_dt_du_dt)
+Gain_e_u_de_dt_du_dt = scale(Gain_e_u_de_dt_du_dt)
+
 Velocity_e_u = [globals()[f"Combination_('e', 'u')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
 Velocity_e_u = np.array(Velocity_e_u)
+Velocity_e_u = reshape(Velocity_e_u)
+Velocity_e_u = scale(Velocity_e_u)
+
+
 Velocity_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
 Velocity_e_u_de_dt = np.array(Velocity_e_u_de_dt)
+Velocity_e_u_de_dt = reshape(Velocity_e_u_de_dt)
+Velocity_e_u_de_dt = scale(Velocity_e_u_de_dt)
+
 Velocity_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
 Velocity_e_u_du_dt = np.array(Velocity_e_u_du_dt)
+Velocity_e_u_du_dt = reshape(Velocity_e_u_du_dt)
+Velocity_e_u_du_dt = scale(Velocity_e_u_du_dt)
+
 Velocity_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
 Velocity_e_u_de_dt_du_dt = np.array(Velocity_e_u_de_dt_du_dt)
+Velocity_e_u_de_dt_du_dt = reshape(Velocity_e_u_de_dt_du_dt)
+Velocity_e_u_de_dt_du_dt = scale(Velocity_e_u_de_dt_du_dt)
+
 Acceleration_e_u = [globals()[f"Combination_('e', 'u')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
 Acceleration_e_u = np.array(Acceleration_e_u)
+Acceleration_e_u = reshape(Acceleration_e_u)
+Acceleration_e_u = scale(Acceleration_e_u)
+
 Acceleration_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
 Acceleration_e_u_de_dt = np.array(Acceleration_e_u_de_dt)
+Acceleration_e_u_de_dt = reshape(Acceleration_e_u_de_dt)
+Acceleration_e_u_de_dt = scale(Acceleration_e_u_de_dt)
+
 Acceleration_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
 Acceleration_e_u_du_dt = np.array(Acceleration_e_u_du_dt)
+Acceleration_e_u_du_dt = reshape(Acceleration_e_u_du_dt)
+Acceleration_e_u_du_dt = scale(Acceleration_e_u_du_dt)
+
 Acceleration_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
 Acceleration_e_u_de_dt_du_dt = np.array(Acceleration_e_u_de_dt_du_dt)
-
+Acceleration_e_u_de_dt_du_dt = reshape(Acceleration_e_u_de_dt_du_dt)
+Acceleration_e_u_de_dt_du_dt = scale(Acceleration_e_u_de_dt_du_dt)
