@@ -3,7 +3,7 @@ import numpy as np
 from sklearn import cluster, datasets
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import AgglomerativeClustering
-from scipy.cluster.hierarchy import dendrogram, linkage
+from sklearn.decomposition import PCA
 
 def dydx_rms(y, x):
     dy = np.diff(y)
@@ -122,9 +122,35 @@ Acceleration_e_u_de_dt_du_dt = reshape(Acceleration_e_u_de_dt_du_dt)
 Acceleration_e_u_de_dt_du_dt = scale(Acceleration_e_u_de_dt_du_dt)
 
 hierarchical_clustering = AgglomerativeClustering(n_clusters=2, linkage = "ward")
-labels_e_u = hierarchical_clustering.fit_predict(Gain_e_u)
-labels_e_u_de_dt = hierarchical_clustering.fit_predict(Gain_e_u_de_dt)
-labels_e_u_du_dt = hierarchical_clustering.fit_predict(Gain_e_u_du_dt)
-labels_e_u_de_dt_du_dt = hierarchical_clustering.fit_predict(Gain_e_u_de_dt_du_dt)
 
+labels_Gain_e_u = hierarchical_clustering.fit_predict(Gain_e_u)
+labels_Gain_e_u_de_dt = hierarchical_clustering.fit_predict(Gain_e_u_de_dt)
+labels_Gain_e_u_du_dt = hierarchical_clustering.fit_predict(Gain_e_u_du_dt)
+labels_Gain_e_u_de_dt_du_dt = hierarchical_clustering.fit_predict(Gain_e_u_de_dt_du_dt)
 
+labels_Velocity_e_u = hierarchical_clustering.fit_predict(Velocity_e_u)
+labels_Velocity_e_u_de_dt = hierarchical_clustering.fit_predict(Velocity_e_u_de_dt)
+labels_Velocity_e_u_du_dt = hierarchical_clustering.fit_predict(Velocity_e_u_du_dt)
+labels_Velocity_e_u_de_dt_du_dt = hierarchical_clustering.fit_predict(Velocity_e_u_de_dt_du_dt)
+
+labels_Acceleration_e_u = hierarchical_clustering.fit_predict(Acceleration_e_u)
+labels_Acceleration_e_u_de_dt = hierarchical_clustering.fit_predict(Acceleration_e_u_de_dt)
+labels_Acceleration_e_u_du_dt = hierarchical_clustering.fit_predict(Acceleration_e_u_du_dt)
+labels_Acceleration_e_u_de_dt_du_dt = hierarchical_clustering.fit_predict(Acceleration_e_u_de_dt_du_dt)
+
+fig, axes = plt.subplots(4, 3, figsize=(15, 20))
+datasets_list = [Gain_e_u, Gain_e_u_de_dt, Gain_e_u_du_dt, Gain_e_u_de_dt_du_dt, Velocity_e_u, Velocity_e_u_de_dt, Velocity_e_u_du_dt, Velocity_e_u_de_dt_du_dt, Acceleration_e_u, Acceleration_e_u_de_dt, Acceleration_e_u_du_dt, Acceleration_e_u_de_dt_du_dt]
+labels_list = [labels_Gain_e_u, labels_Gain_e_u_de_dt, labels_Gain_e_u_du_dt, labels_Gain_e_u_de_dt_du_dt]
+titles = ["Gain (e, u)", "Gain (e, u, de/dt)", "Gain (e, u, du/dt)", "Gain (e, u, de/dt, du/dt)", "Velocity (e, u)", "Velocity (e, u, de/dt)", "Velocity (e, u, du/dt)", "Velocity (e, u, de/dt, du/dt)", "Acceleration (e, u)", "Acceleration (e, u, de/dt)", "Acceleration (e, u, du/dt)", "Acceleration (e, u, de/dt, du/dt)"]
+
+pca = PCA(n_components=2)
+for ax, X, labels, title in zip(axes.flatten(), datasets_list, labels_list, titles):
+    X_2d_plot = pca.fit_transform(X)
+    scatter = ax.scatter(X_2d_plot[:, 0], X_2d_plot[:, 1], c=labels, cmap="bwr")
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    ax.set_title(title)
+    
+plt.colorbar(scatter, ax = axes[-1], label = "Cluster")
+plt.tight_layout()
+plt.show()
