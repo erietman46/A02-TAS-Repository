@@ -2,6 +2,7 @@
 from zero_crossings import zero_crossings
 from total_variation import total_variation
 from error_pdf import error_pdf
+from RMS_error import RMS_error
 import pandas as pd
 from openpyxl.styles import PatternFill
 
@@ -61,6 +62,58 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
     stat_res4.to_excel(writer, sheet_name="ErrorPDF_stats")
 
     sheet = writer.sheets["ErrorPDF_stats"]
+
+    for row in sheet.iter_rows(min_row=2):
+        cell = row[1]
+        if float(cell.value) < 0.05:
+            cell.fill = highlight
+
+    # === RMS of e ===
+    data5, stat_res5 = RMS_error()
+
+    data5.to_excel(writer, sheet_name="RMSe_data")
+    stat_res5.to_excel(writer, sheet_name="RMSe_stats")
+
+    sheet = writer.sheets["RMSe_stats"]
+
+    for row in sheet.iter_rows(min_row=2):
+        cell = row[1]
+        if float(cell.value) < 0.05:
+            cell.fill = highlight
+
+    # === RMS of u ===
+    data6, stat_res6 = RMS_input()
+
+    data6.to_excel(writer, sheet_name="RMSu_data")
+    stat_res6.to_excel(writer, sheet_name="RMSu_stats")
+
+    sheet = writer.sheets["RMSu_stats"]
+
+    for row in sheet.iter_rows(min_row=2):
+        cell = row[1]
+        if float(cell.value) < 0.05:
+            cell.fill = highlight
+
+    # === RMS of DERe ===
+    data7, stat_res7 = RMS_DERe()
+
+    data7.to_excel(writer, sheet_name="RMSDERe_data")
+    stat_res7.to_excel(writer, sheet_name="RMSDERe_stats")
+
+    sheet = writer.sheets["RMSDERe_stats"]
+
+    for row in sheet.iter_rows(min_row=2):
+        cell = row[1]
+        if float(cell.value) < 0.05:
+            cell.fill = highlight
+
+    # === RMS of DERu ===
+    data8, stat_res8 = RMS_DERu()
+
+    data8.to_excel(writer, sheet_name="RMSDERu_data")
+    stat_res8.to_excel(writer, sheet_name="RMSDERu_stats")
+
+    sheet = writer.sheets["RMSDERu_stats"]
 
     for row in sheet.iter_rows(min_row=2):
         cell = row[1]
