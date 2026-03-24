@@ -26,8 +26,8 @@ for i in range(len(pilots)):
             mean_squared = np.mean(column**2)
             sum += np.sqrt(mean_squared)
 
-        MSE = sum/5
-        u[i,j] = MSE
+        RMS = sum/5
+        u[i,j] = RMS
         
 #An array which the rows are pilots and columns are conditions
 print(u)
