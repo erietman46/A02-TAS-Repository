@@ -3,6 +3,9 @@ from zero_crossings import zero_crossings
 from total_variation import total_variation
 from error_pdf import error_pdf
 from RMS_error import RMS_error
+from RMS_u import RMS_input
+from derivative_e_RMS import RMS_DERe
+from derivative_u_RMS import RMS_DERu
 import pandas as pd
 from openpyxl.styles import PatternFill
 
