@@ -59,15 +59,27 @@ for condition in range(1, 7):
                 Acceleration.append(globals()[f"Combination_{combination}_P_{pilot}_C{condition}"])
 
 Gain_e_u = [globals()[f"Combination_('e', 'u')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
+Gain_e_u = np.array(Gain_e_u)
 Gain_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
+Gain_e_u_de_dt = np.array(Gain_e_u_de_dt)
 Gain_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
+Gain_e_u_du_dt = np.array(Gain_e_u_du_dt)
 Gain_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
+Gain_e_u_de_dt_du_dt = np.array(Gain_e_u_de_dt_du_dt)
 Velocity_e_u = [globals()[f"Combination_('e', 'u')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
+Velocity_e_u = np.array(Velocity_e_u)
 Velocity_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
+Velocity_e_u_de_dt = np.array(Velocity_e_u_de_dt)
 Velocity_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
+Velocity_e_u_du_dt = np.array(Velocity_e_u_du_dt)
 Velocity_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
+Velocity_e_u_de_dt_du_dt = np.array(Velocity_e_u_de_dt_du_dt)
 Acceleration_e_u = [globals()[f"Combination_('e', 'u')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
+Acceleration_e_u = np.array(Acceleration_e_u)
 Acceleration_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
+Acceleration_e_u_de_dt = np.array(Acceleration_e_u_de_dt)
 Acceleration_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
+Acceleration_e_u_du_dt = np.array(Acceleration_e_u_du_dt)
 Acceleration_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
+Acceleration_e_u_de_dt_du_dt = np.array(Acceleration_e_u_de_dt_du_dt)
 
