@@ -3,7 +3,8 @@ import matplotlib.pyplot as plt
 import scipy.optimize as opt
 import os
 from Datasetcode import dataset
-
+import scipy.optimize as opt
+from scipy.stats import qmc  # <-- ADD THIS
 
 # ==============================================================================
 # MODEL DEFINITIONS
@@ -87,10 +88,10 @@ def cost_function(params, w, vis_data, vest_data, condition, weight_vis=1.0, wei
 
 VIS_BOUNDS = [
     (0.01, 10.0),   # Kp
-    (0.0,  3),    # TL
-    (0.01, 3.5),    # TI
+    (0.0,  10.0),    # TL
+    (0.0, 10.0),    # TI
     (0.01, 0.5),    # tau  [s]
-    (5.0,  25.0),   # omega_nm  [rad/s]
+    (5.0,  35.0),   # omega_nm  [rad/s]
     (0.1,  1.0),    # zeta_nm
 ]
 
@@ -110,13 +111,7 @@ def _mid(bounds):
 VIS_X0 = _mid(VIS_BOUNDS)
 VEST_X0 = _mid(VEST_BOUNDS)
 
-N_STARTS = 10  # Number of multistart initial points (including the mid-point)
-RNG = np.random.default_rng(11) # use seed 42 for reproducibility
-
-
-def random_x0(bounds):
-    """Draw a random initial point uniformly within bounds."""
-    return np.array([RNG.uniform(lo, hi) for lo, hi in bounds], dtype=float)
+N_STARTS = 30  # Number of multistart initial points (including the mid-point)
 
 
 def initialization(condition):
@@ -132,7 +127,6 @@ def initialization(condition):
 
     return x0, bounds
 
-
 def parameter_names(condition):
     """Return ordered parameter names for a given condition."""
     base_names = ['Kp', 'TL', 'TI', 'tau', 'omega_nm', 'zeta_nm']
@@ -140,6 +134,44 @@ def parameter_names(condition):
         base_names += ['Km', 'Tsc1', 'Tsc2', 'Tsc3', 'tau_m' ]
     return base_names
 
+def clip_to_bounds(x, bounds):
+    lo, hi = bounds_to_arrays(bounds)
+    return np.minimum(np.maximum(x, lo), hi)
+
+def bounds_to_arrays(bounds):
+    lo = np.array([b[0] for b in bounds], dtype=float)
+    hi = np.array([b[1] for b in bounds], dtype=float)
+    return lo, hi
+
+def lhs_points(bounds, n_points, seed):
+    """
+    LHS samples scaled to bounds, supporting fixed bounds (lo == hi).
+    Returns array shape (n_points, dim).
+    """
+    lo, hi = bounds_to_arrays(bounds)
+    dim = len(bounds)
+
+    # Identify free vs fixed dimensions
+    free_mask = hi > lo
+    fixed_mask = ~free_mask
+
+    X = np.zeros((n_points, dim), dtype=float)
+
+    # Fill fixed dimensions directly
+    if np.any(fixed_mask):
+        X[:, fixed_mask] = lo[fixed_mask]  # same as hi
+
+    # LHS only on free dimensions
+    n_free = int(np.sum(free_mask))
+    if n_free > 0:
+        sampler = qmc.LatinHypercube(d=n_free, seed=int(seed))
+        u = sampler.random(n=n_points)  # [0,1]
+        lo_f = lo[free_mask]
+        hi_f = hi[free_mask]
+        # Manual scaling (works because all hi_f > lo_f)
+        X[:, free_mask] = lo_f + u * (hi_f - lo_f)
+
+    return X
 
 # ==============================================================================
 # FITTING
@@ -177,13 +209,21 @@ def fit_subject_condition(subject, condition, weight_vis=1.0, weight_vest=1.0, v
     best_params = None
     best_result = None
 
-    starts = [x0_base] + [random_x0(bounds) for _ in range(N_STARTS - 1)]
+    # --- Multistart initialization using LHS ---
+    # Deterministic seed per (subject, condition) so that parallel runs reproduce exactly.
+    lhs_seed = 10_000 * int(subject) + int(condition)
+
+    if N_STARTS > 1:
+        X_lhs = lhs_points(bounds, n_points=N_STARTS - 1, seed=lhs_seed)
+        starts = [x0_base] + [X_lhs[k, :] for k in range(X_lhs.shape[0])]
+    else:
+        starts = [x0_base]
 
     for x0 in starts:
         try:
             res = opt.minimize(
                 cost_function,
-                x0=x0,
+                x0=np.asarray(x0, dtype=float),
                 args=(w, vis_data, vest_data, condition, weight_vis, weight_vest),
                 method="L-BFGS-B",
                 bounds=bounds,
@@ -204,6 +244,9 @@ def fit_subject_condition(subject, condition, weight_vis=1.0, weight_vest=1.0, v
     fitted_params = best_params
 
     visual_fit = Hpe_model(w, *fitted_params[:6])
+
+    # NOTE: This is only correct if your motion parameter vector matches what Hpxd_model expects.
+    # Make sure your motion parameter ordering/slicing is fixed (we discussed the bug earlier).
     vest_fit = Hpxd_model(w, *fitted_params[4:]) if motion else None
 
     names = parameter_names(condition)
@@ -216,8 +259,6 @@ def fit_subject_condition(subject, condition, weight_vis=1.0, weight_vest=1.0, v
         print(f"  Subj {subject}, Cond {condition}  →  cost = {best_cost:.4f}")
 
     return visual_fit, vest_fit, best_result, best_cost
-
-
 
 
 

@@ -1,3 +1,4 @@
+#boxplot_main.py
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -58,7 +59,7 @@ all_params = [
 for idx, param in enumerate(all_params):
     plt.figure(figsize=(10, 6))
     data_to_plot = [condition[:, idx] for condition in all_conditions]
-    plt.boxplot(data_to_plot, tick_labels=condition_names)
+    plt.boxplot(data_to_plot, tick_labels=condition_names, showfliers=False)
     plt.title(f"Boxplot of {param} across conditions")
     plt.xlabel("Condition")
     plt.ylabel(param)

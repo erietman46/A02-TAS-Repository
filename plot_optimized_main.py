@@ -1,3 +1,4 @@
+#plot_optimised_main.py
 import matplotlib
 matplotlib.use("Agg")  # Non-interactive backend — faster file saving, no GUI overhead
 import matplotlib.pyplot as plt
@@ -47,7 +48,7 @@ def run_one(i, j):
     """Run a single subject/condition fit. Executed in a worker process."""
     # Each worker process gets its own imports
     from Datasetcode import dataset
-    import Optimizedpilotfitting_official_copy as opf
+    import Optimizedpilotfitting_main as opf
 
     motion = j in [4, 5, 6]
 
