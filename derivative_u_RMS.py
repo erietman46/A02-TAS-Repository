@@ -2,8 +2,8 @@ from preprocessing import pilots
 import numpy as np
 import pandas as pd
 
-#Array to store RMS derivative of errors
-errors_d = np.zeros((6,6))
+#Array to store RMS derivative of inputs
+U_d = np.zeros((6,6))
 time = pilots[0]["C1"]["t"]
 
 #RMS will be calculated for all experiments and the average will be taken per condition per pilot.
@@ -17,25 +17,25 @@ for i in range(len(pilots)):
         #looping conditions
         k = j+1
         condition = f"C{k}"
-        error = pilot[condition]["u"]
+        U_0 = pilot[condition]["u"]
 
         sum = 0
 
         for l in range(5):
             #looping columns
-            column = error[:,l]
+            column = U_0[:,l]
 
             #Taking derivative
             derivative = np.gradient(column)
             mean_squared = np.mean(derivative**2)
             sum += np.sqrt(mean_squared)
 
-        MSE = sum/5
-        errors_d[i,j] = MSE
+        RMS = sum/5
+        U_d[i,j] = RMS
 
 #An array which the rows are pilots and columns are conditions
 df = pd.DataFrame(
-    errors_d,
+    U_d,
     index=[f"Pilot {i+1}" for i in range(6)],
     columns=[f"C{i+1}" for i in range(6)]
 )
