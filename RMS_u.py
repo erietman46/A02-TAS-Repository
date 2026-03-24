@@ -39,7 +39,7 @@ def RMS_input():
         index=[f"Pilot {i + 1}" for i in range(6)],
         columns=[f"C{i + 1}" for i in range(6)]
     )
-    res = statistics.statistics(np.array(errors))
+    res = statistics.statistics(np.array(u))
     results = pd.DataFrame(
         res,
         index=[f"C{i + 1}" for i in range(3)],
