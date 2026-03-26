@@ -4,6 +4,7 @@ from sklearn import cluster, datasets
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.decomposition import PCA
+from sklearn.metrics import adjusted_rand_score
 
 def dydx_rms(y, x):
     dy = np.diff(y)
@@ -59,98 +60,158 @@ for condition in range(1, 7):
     for pilot in range(1, 7):
         for combination in combinations:
             globals() [f"Combination_{combination}_P_{pilot}_C{condition}"] = [data[f"P{pilot}_C{condition}"][feature] for feature in combination]
-            
+
+datasets_list = []
+
 Gain_e_u = [globals()[f"Combination_('e', 'u')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
 Gain_e_u = np.array(Gain_e_u)
+Gain_e_u = Gain_e_u.transpose(0, 2, 1)
 Gain_e_u = reshape(Gain_e_u)
 Gain_e_u = scale(Gain_e_u)
+datasets_list.append(Gain_e_u)
 
 Gain_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
 Gain_e_u_de_dt = np.array(Gain_e_u_de_dt)
+Gain_e_u_de_dt = Gain_e_u_de_dt.transpose(0, 2, 1)
 Gain_e_u_de_dt = reshape(Gain_e_u_de_dt)
 Gain_e_u_de_dt = scale(Gain_e_u_de_dt)
+datasets_list.append(Gain_e_u_de_dt)
 
 Gain_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
 Gain_e_u_du_dt = np.array(Gain_e_u_du_dt)
+Gain_e_u_du_dt = Gain_e_u_du_dt.transpose(0, 2, 1)
 Gain_e_u_du_dt = reshape(Gain_e_u_du_dt)
 Gain_e_u_du_dt = scale(Gain_e_u_du_dt)
+datasets_list.append(Gain_e_u_du_dt)
 
 Gain_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
 Gain_e_u_de_dt_du_dt = np.array(Gain_e_u_de_dt_du_dt)
+Gain_e_u_de_dt_du_dt = Gain_e_u_de_dt_du_dt.transpose(0, 2, 1)
 Gain_e_u_de_dt_du_dt = reshape(Gain_e_u_de_dt_du_dt)
 Gain_e_u_de_dt_du_dt = scale(Gain_e_u_de_dt_du_dt)
+datasets_list.append(Gain_e_u_de_dt_du_dt)
 
 Velocity_e_u = [globals()[f"Combination_('e', 'u')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
 Velocity_e_u = np.array(Velocity_e_u)
+Velocity_e_u = Velocity_e_u.transpose(0, 2, 1)
 Velocity_e_u = reshape(Velocity_e_u)
 Velocity_e_u = scale(Velocity_e_u)
-
+datasets_list.append(Velocity_e_u)
 
 Velocity_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
 Velocity_e_u_de_dt = np.array(Velocity_e_u_de_dt)
+Velocity_e_u_de_dt = Velocity_e_u_de_dt.transpose(0, 2, 1)
 Velocity_e_u_de_dt = reshape(Velocity_e_u_de_dt)
 Velocity_e_u_de_dt = scale(Velocity_e_u_de_dt)
+datasets_list.append(Velocity_e_u_de_dt)
 
 Velocity_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
 Velocity_e_u_du_dt = np.array(Velocity_e_u_du_dt)
+Velocity_e_u_du_dt = Velocity_e_u_du_dt.transpose(0, 2, 1)
 Velocity_e_u_du_dt = reshape(Velocity_e_u_du_dt)
 Velocity_e_u_du_dt = scale(Velocity_e_u_du_dt)
+datasets_list.append(Velocity_e_u_du_dt)
 
 Velocity_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
 Velocity_e_u_de_dt_du_dt = np.array(Velocity_e_u_de_dt_du_dt)
+Velocity_e_u_de_dt_du_dt = Velocity_e_u_de_dt_du_dt.transpose(0, 2, 1)
 Velocity_e_u_de_dt_du_dt = reshape(Velocity_e_u_de_dt_du_dt)
 Velocity_e_u_de_dt_du_dt = scale(Velocity_e_u_de_dt_du_dt)
+datasets_list.append(Velocity_e_u_de_dt_du_dt)
 
 Acceleration_e_u = [globals()[f"Combination_('e', 'u')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
 Acceleration_e_u = np.array(Acceleration_e_u)
+Acceleration_e_u = Acceleration_e_u.transpose(0, 2, 1)
 Acceleration_e_u = reshape(Acceleration_e_u)
 Acceleration_e_u = scale(Acceleration_e_u)
+datasets_list.append(Acceleration_e_u)
 
 Acceleration_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
 Acceleration_e_u_de_dt = np.array(Acceleration_e_u_de_dt)
+Acceleration_e_u_de_dt = Acceleration_e_u_de_dt.transpose(0, 2, 1)
 Acceleration_e_u_de_dt = reshape(Acceleration_e_u_de_dt)
 Acceleration_e_u_de_dt = scale(Acceleration_e_u_de_dt)
+datasets_list.append(Acceleration_e_u_de_dt)
 
 Acceleration_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
 Acceleration_e_u_du_dt = np.array(Acceleration_e_u_du_dt)
+Acceleration_e_u_du_dt = Acceleration_e_u_du_dt.transpose(0, 2, 1)
 Acceleration_e_u_du_dt = reshape(Acceleration_e_u_du_dt)
 Acceleration_e_u_du_dt = scale(Acceleration_e_u_du_dt)
+datasets_list.append(Acceleration_e_u_du_dt)
 
 Acceleration_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
 Acceleration_e_u_de_dt_du_dt = np.array(Acceleration_e_u_de_dt_du_dt)
+Acceleration_e_u_de_dt_du_dt = Acceleration_e_u_de_dt_du_dt.transpose(0, 2, 1)
 Acceleration_e_u_de_dt_du_dt = reshape(Acceleration_e_u_de_dt_du_dt)
 Acceleration_e_u_de_dt_du_dt = scale(Acceleration_e_u_de_dt_du_dt)
+datasets_list.append(Acceleration_e_u_de_dt_du_dt)
 
 hierarchical_clustering = AgglomerativeClustering(n_clusters=2, linkage = "ward")
+labels_list = []
+titles_list = []
 
 labels_Gain_e_u = hierarchical_clustering.fit_predict(Gain_e_u)
+labels_list.append(labels_Gain_e_u)
+titles_list.append("Gain (e, u)")
 labels_Gain_e_u_de_dt = hierarchical_clustering.fit_predict(Gain_e_u_de_dt)
+labels_list.append(labels_Gain_e_u_de_dt)
+titles_list.append("Gain (e, u, de/dt)")
 labels_Gain_e_u_du_dt = hierarchical_clustering.fit_predict(Gain_e_u_du_dt)
+labels_list.append(labels_Gain_e_u_du_dt)
+titles_list.append("Gain (e, u, du/dt)")
 labels_Gain_e_u_de_dt_du_dt = hierarchical_clustering.fit_predict(Gain_e_u_de_dt_du_dt)
+labels_list.append(labels_Gain_e_u_de_dt_du_dt)
+titles_list.append("Gain (e, u, de/dt, du/dt)")
 
 labels_Velocity_e_u = hierarchical_clustering.fit_predict(Velocity_e_u)
+labels_list.append(labels_Velocity_e_u)
+titles_list.append("Velocity (e, u)")
 labels_Velocity_e_u_de_dt = hierarchical_clustering.fit_predict(Velocity_e_u_de_dt)
+labels_list.append(labels_Velocity_e_u_de_dt)
+titles_list.append("Velocity (e, u, de/dt)")
 labels_Velocity_e_u_du_dt = hierarchical_clustering.fit_predict(Velocity_e_u_du_dt)
+labels_list.append(labels_Velocity_e_u_du_dt)
+titles_list.append("Velocity (e, u, du/dt)")
 labels_Velocity_e_u_de_dt_du_dt = hierarchical_clustering.fit_predict(Velocity_e_u_de_dt_du_dt)
+labels_list.append(labels_Velocity_e_u_de_dt_du_dt)
+titles_list.append("Velocity (e, u, de/dt, du/dt)")
 
 labels_Acceleration_e_u = hierarchical_clustering.fit_predict(Acceleration_e_u)
+labels_list.append(labels_Acceleration_e_u)
+titles_list.append("Acceleration (e, u)")
 labels_Acceleration_e_u_de_dt = hierarchical_clustering.fit_predict(Acceleration_e_u_de_dt)
+labels_list.append(labels_Acceleration_e_u_de_dt)
+titles_list.append("Acceleration (e, u, de/dt)")
 labels_Acceleration_e_u_du_dt = hierarchical_clustering.fit_predict(Acceleration_e_u_du_dt)
+labels_list.append(labels_Acceleration_e_u_du_dt)
+titles_list.append("Acceleration (e, u, du/dt)")
 labels_Acceleration_e_u_de_dt_du_dt = hierarchical_clustering.fit_predict(Acceleration_e_u_de_dt_du_dt)
+labels_list.append(labels_Acceleration_e_u_de_dt_du_dt)
+titles_list.append("Acceleration (e, u, de/dt, du/dt)")
 
-fig, axes = plt.subplots(4, 3, figsize=(15, 20))
-datasets_list = [Gain_e_u, Gain_e_u_de_dt, Gain_e_u_du_dt, Gain_e_u_de_dt_du_dt, Velocity_e_u, Velocity_e_u_de_dt, Velocity_e_u_du_dt, Velocity_e_u_de_dt_du_dt, Acceleration_e_u, Acceleration_e_u_de_dt, Acceleration_e_u_du_dt, Acceleration_e_u_de_dt_du_dt]
-labels_list = [labels_Gain_e_u, labels_Gain_e_u_de_dt, labels_Gain_e_u_du_dt, labels_Gain_e_u_de_dt_du_dt]
-titles = ["Gain (e, u)", "Gain (e, u, de/dt)", "Gain (e, u, du/dt)", "Gain (e, u, de/dt, du/dt)", "Velocity (e, u)", "Velocity (e, u, de/dt)", "Velocity (e, u, du/dt)", "Velocity (e, u, de/dt, du/dt)", "Acceleration (e, u)", "Acceleration (e, u, de/dt)", "Acceleration (e, u, du/dt)", "Acceleration (e, u, de/dt, du/dt)"]
+fig, axes = plt.subplots(4, 3, figsize=(12, 22))
 
 pca = PCA(n_components=2)
-for ax, X, labels, title in zip(axes.flatten(), datasets_list, labels_list, titles):
+for ax, X, labels, title in zip(axes.flatten(), datasets_list, labels_list, titles_list):
     X_2d_plot = pca.fit_transform(X)
-    scatter = ax.scatter(X_2d_plot[:, 0], X_2d_plot[:, 1], c=labels, cmap="bwr")
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
-    ax.set_title(title)
-    
-plt.colorbar(scatter, ax = axes[-1], label = "Cluster")
-plt.tight_layout()
+    for cluster, color in zip([0, 1], ['blue', 'red']):
+        mask = labels == cluster
+        ax.scatter(X_2d_plot[mask, 0], X_2d_plot[mask, 1], c=color, label=f'Cluster {cluster + 1}')
+    ax.set_xlabel("PC1", fontsize=8)
+    ax.set_ylabel("PC2", fontsize=8)
+    ax.set_title(title, fontsize=9)
+    ax.tick_params(labelsize=7)
+    ax.legend(fontsize=7)
+
+plt.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05, hspace=0.4, wspace=0.3)
 plt.show()
+
+true_labels = np.repeat([0] * 6 + [1] * 6, 5)  # repeat each pilot's label 5 times
+
+
+scores_list = []
+for labels, title in zip(labels_list, titles_list):
+    score = adjusted_rand_score(true_labels, labels)
+    scores_list.append(score)
+    print(f"{title}: {score:.3f}")
