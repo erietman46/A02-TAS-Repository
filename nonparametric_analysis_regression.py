@@ -93,10 +93,10 @@ def controlled_element_frf(w: np.ndarray, condition: int, kc: float = 1.0) -> np
     s = 1j * w
 
     if condition in [1, 4]:
-        return kc * 1000 / (s + 10)**3
+        return kc * 1 / (0.1 * s + 1)**3
 
     if condition in [2, 5]:
-        return kc * 3600 / (s * (s + 30)**2)
+        return kc * 4 / (s * (0.03333333 * s + 1)**2)
 
     if condition in [3, 6]:
         return kc * 15 / (s**2)
