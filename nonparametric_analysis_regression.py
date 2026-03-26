@@ -79,19 +79,27 @@ def is_valid_condition(condition: int) -> bool:
 # =============================================================================
 def controlled_element_frf(w: np.ndarray, condition: int, kc: float = 1.0) -> np.ndarray:
     """
-    Controlled element dynamics:
-        condition 1,4 -> position      Hc = Kc
-        condition 2,5 -> velocity      Hc = Kc / s
-        condition 3,6 -> acceleration  Hc = Kc / s^2
+    Controlled element dynamics (realistic vehicle dynamics):
+
+        condition 1,4 -> position
+            Hc = Kc * 1000 / (s + 10)^3
+
+        condition 2,5 -> velocity
+            Hc = Kc * 3600 / (s * (s + 30)^2)
+
+        condition 3,6 -> acceleration
+            Hc = Kc * 15 / s^2
     """
     s = 1j * w
 
     if condition in [1, 4]:
-        return kc * np.ones_like(s, dtype=complex)
+        return kc * 1000 / (s + 10)**3
+
     if condition in [2, 5]:
-        return kc / s
+        return kc * 3600 / (s * (s + 30)**2)
+
     if condition in [3, 6]:
-        return kc / (s ** 2)
+        return kc * 15 / (s**2)
 
     raise ValueError("Condition must be one of [1, 2, 3, 4, 5, 6].")
 
