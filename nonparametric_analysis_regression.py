@@ -215,42 +215,114 @@ def smooth_curve_with_polynomial_regression(
 # =============================================================================
 # Margin extraction with control
 # =============================================================================
-def compute_margins(w: np.ndarray, L: np.ndarray):
+def find_unity_gain_crossings(w: np.ndarray, mag: np.ndarray):
     """
-    Compute classical margins from measured complex FRF samples.
+    Find all |L| = 1 crossings using linear interpolation in log-frequency.
 
-    control.margin expects:
-        magnitude (absolute, not dB),
-        phase in degrees,
-        omega
+    Returns
+    -------
+    crossings : list of float
+        Crossover frequencies in rad/s
+    """
+    w = np.asarray(w).ravel().astype(float)
+    mag = np.asarray(mag).ravel().astype(float)
+
+    valid = np.isfinite(w) & np.isfinite(mag) & (w > 0) & (mag > 0)
+    w = w[valid]
+    mag = mag[valid]
+
+    if len(w) < 2:
+        return []
+
+    x = np.log10(w)
+    y = np.log10(mag)   # unity gain => y = 0
+
+    crossings = []
+
+    for i in range(len(y) - 1):
+        y1, y2 = y[i], y[i + 1]
+
+        # exact point on unity
+        if y1 == 0:
+            crossings.append(w[i])
+
+        # sign change around unity
+        elif y1 * y2 < 0:
+            t = -y1 / (y2 - y1)   # interpolation fraction
+            x_cross = x[i] + t * (x[i + 1] - x[i])
+            crossings.append(10 ** x_cross)
+
+    # if final point is exactly unity
+    if y[-1] == 0:
+        crossings.append(w[-1])
+
+    # remove near-duplicates
+    cleaned = []
+    for wc in crossings:
+        if not cleaned or abs(np.log10(wc) - np.log10(cleaned[-1])) > 1e-6:
+            cleaned.append(wc)
+
+    return cleaned
+
+
+def interpolate_phase_at_frequency(w: np.ndarray, phase_deg: np.ndarray, wc: float):
+    """
+    Interpolate unwrapped phase at crossover frequency in log-frequency space.
+    """
+    w = np.asarray(w).ravel().astype(float)
+    phase_deg = np.asarray(phase_deg).ravel().astype(float)
+
+    valid = np.isfinite(w) & np.isfinite(phase_deg) & (w > 0)
+    w = w[valid]
+    phase_deg = phase_deg[valid]
+
+    if len(w) < 2 or not np.isfinite(wc) or wc <= 0:
+        return np.nan
+
+    x = np.log10(w)
+    xc = np.log10(wc)
+
+    return np.interp(xc, x, phase_deg)
+
+
+def compute_margins(w: np.ndarray, L: np.ndarray, crossover="first"):
+    """
+    Compute gain crossover and phase margin directly from sampled FRF.
+
+    Parameters
+    ----------
+    crossover : str
+        "first" -> first unity-gain crossover (recommended here)
+        "last"  -> last unity-gain crossover
     """
     mag, phase_deg = magnitude_and_phase(L)
 
-    # Wrap phase into [-180, 180) for control.margin
-    phase_wrapped = ((phase_deg + 180.0) % 360.0) - 180.0
+    gain_crossings = find_unity_gain_crossings(w, mag)
 
-    gain_margin = np.nan
-    phase_margin = np.nan
-    phase_crossover = np.nan
-    gain_crossover = np.nan
+    if len(gain_crossings) == 0:
+        return {
+            "gain_margin": np.nan,
+            "phase_margin_deg": np.nan,
+            "phase_crossover_rad_s": np.nan,
+            "gain_crossover_rad_s": np.nan,
+            "all_gain_crossovers_rad_s": [],
+        }
 
-    try:
-        gm, pm, wpc, wgc = ct.margin(mag, phase_wrapped, w)
-        gain_margin = float(gm) if np.isfinite(gm) else np.nan
-        phase_margin = float(pm) if np.isfinite(pm) else np.nan
-        phase_crossover = float(wpc) if np.isfinite(wpc) else np.nan
-        gain_crossover = float(wgc) if np.isfinite(wgc) else np.nan
-    except Exception:
-        pass
+    if crossover == "last":
+        wc = gain_crossings[-1]
+    else:
+        wc = gain_crossings[0]
+
+    phase_at_wc = interpolate_phase_at_frequency(w, phase_deg, wc)
+    pm = 180.0 + phase_at_wc
 
     return {
-        "gain_margin": gain_margin,
-        "phase_margin_deg": phase_margin,
-        "phase_crossover_rad_s": phase_crossover,
-        "gain_crossover_rad_s": gain_crossover,
+        "gain_margin": np.nan,  # not computed here
+        "phase_margin_deg": float(pm) if np.isfinite(pm) else np.nan,
+        "phase_crossover_rad_s": np.nan,
+        "gain_crossover_rad_s": float(wc),
+        "all_gain_crossovers_rad_s": gain_crossings,
     }
-
-
 # =============================================================================
 # Plot formatting
 # =============================================================================
