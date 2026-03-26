@@ -6,26 +6,12 @@ from RMS_error import RMS_error
 from RMS_u import RMS_input
 from derivative_e_RMS import RMS_DERe
 from derivative_u_RMS import RMS_DERu
+from contributions import contributions
 import pandas as pd
 from openpyxl.styles import PatternFill
 
 pd.set_option('display.max_columns', None)
 pd.set_option('display.width', None)
-
-'''Zero-crossings of e'''
-data, stat_res = zero_crossings()
-print(f"\nMean Zero-crossings: \n{data}")
-print(f"\nStatistical Results: \n{stat_res}\n")
-
-'''Total Variation of u'''
-data2, stat_res2 = total_variation()
-print(f"\nMean Total Variation: \n{data2}")
-print(f"\nStatistical Results: \n{stat_res2}\n")
-
-'''Mean and 1-sigma Interval of e'''
-data3, stat_res3, data4, stat_res4 = error_pdf()
-print(f"\nMean 1-sigma Interval Width: \n{data4}")
-print(f"\nStatistical Results: \n{stat_res4}\n")
 
 '''Output an Excel file'''
 highlight = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
@@ -122,6 +108,52 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
         cell = row[1]
         if float(cell.value) < 0.05:
             cell.fill = highlight
+
+    # === Contributions to u ===
+    data9, stat_res9, data10, stat_res10, data11, stat_res11 = contributions()
+
+    # --- WRITE DATA SHEET ---
+    start_row = 0
+
+    # f_d contribution
+    data9.to_excel(writer, sheet_name="Contrib_data", startrow=start_row)
+    start_row += len(data9) + 3
+
+    # f_t contribution
+    data10.to_excel(writer, sheet_name="Contrib_data", startrow=start_row)
+    start_row += len(data10) + 3
+
+    # noise contribution
+    data11.to_excel(writer, sheet_name="Contrib_data", startrow=start_row)
+
+    # --- WRITE STATS SHEET ---
+    start_row = 0
+
+    # f_d stats
+    stat_res9.to_excel(writer, sheet_name="Contrib_stats", startrow=start_row)
+    start_row += len(stat_res9) + 3
+
+    # f_t stats
+    stat_res10.to_excel(writer, sheet_name="Contrib_stats", startrow=start_row)
+    start_row += len(stat_res10) + 3
+
+    # noise stats
+    stat_res11.to_excel(writer, sheet_name="Contrib_stats", startrow=start_row)
+
+    # --- APPLY HIGHLIGHTING ---
+    sheet = writer.sheets["Contrib_stats"]
+
+    current_row = 0
+    for stat_res in [stat_res9, stat_res10, stat_res11]:
+
+        for row in sheet.iter_rows(min_row=current_row + 2,
+                                   max_row=current_row + 1 + len(stat_res)):
+
+            cell = row[1]  # p-value column
+            if float(cell.value) < 0.05:
+                cell.fill = highlight
+
+        current_row += len(stat_res) + 3
 
 '''If a .txt file with the outputs are more useful, use this
 with open("results.txt", "w") as f:

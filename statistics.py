@@ -19,6 +19,7 @@ def statistics(metric):
     """
     metric: numpy array of shape (6,6)
     Columns: [cond1_no, cond2_no, cond3_no, cond1_motion, cond2_motion, cond3_motion]
+    Rows: [pilot1, pilot2, pilot3, pilot4, pilot5, pilot6]
     """
     num_conditions = 3
     num_participants = metric.shape[0]
