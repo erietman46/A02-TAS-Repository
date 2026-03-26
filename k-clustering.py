@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn import cluster, datasets
+from sklearn import cluster
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.decomposition import PCA
@@ -22,7 +22,6 @@ def scale(array):
     return scaled_array
 
 data = {}
-
 for subject in range(1, 7):
     for condition in range(1, 7):
 
@@ -191,7 +190,6 @@ labels_list.append(labels_Acceleration_e_u_de_dt_du_dt)
 titles_list.append("Acceleration (e, u, de/dt, du/dt)")
 
 fig, axes = plt.subplots(4, 3, figsize=(12, 22))
-
 pca = PCA(n_components=2)
 for ax, X, labels, title in zip(axes.flatten(), datasets_list, labels_list, titles_list):
     X_2d_plot = pca.fit_transform(X)
@@ -207,9 +205,7 @@ for ax, X, labels, title in zip(axes.flatten(), datasets_list, labels_list, titl
 plt.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05, hspace=0.4, wspace=0.3)
 plt.show()
 
-true_labels = np.repeat([0] * 6 + [1] * 6, 5)  # repeat each pilot's label 5 times
-
-
+true_labels = np.repeat([0] * 6 + [1] * 6, 5) 
 scores_list = []
 for labels, title in zip(labels_list, titles_list):
     score = adjusted_rand_score(true_labels, labels)
