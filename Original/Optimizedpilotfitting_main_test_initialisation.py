@@ -88,8 +88,8 @@ def cost_function(params, w, vis_data, vest_data, condition, weight_vis=1.0, wei
 
 VIS_BOUNDS = [
     (0.01, 10.0),   # Kp
-    (0.0,  10.0),    # TL
-    (0.0, 10.0),    # TI
+    (0.0,  10.5),    # TL
+    (0.0, 10.5),    # TI
     (0.01, 0.5),    # tau  [s]
     (5.0,  35.0),   # omega_nm  [rad/s]
     (0.1,  1.0),    # zeta_nm
