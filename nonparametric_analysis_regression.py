@@ -323,6 +323,8 @@ def compute_margins(w: np.ndarray, L: np.ndarray, crossover="first"):
         "gain_crossover_rad_s": float(wc),
         "all_gain_crossovers_rad_s": gain_crossings,
     }
+
+
 # =============================================================================
 # Plot formatting
 # =============================================================================
