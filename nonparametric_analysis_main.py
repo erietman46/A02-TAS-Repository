@@ -534,13 +534,13 @@ def plot_boxplots_all_conditions(df: pd.DataFrame, outdir: Path = OUTPUT_DIR):
     ax = axs1[0]
     bp = ax.boxplot(target_wc, widths=0.55, patch_artist=False, showfliers=True)
     _style_boxplot(bp)
-    setup_boxplot_axis(ax, r"Target crossover frequency, $\omega_{c,t}$ [rad s$^{-1}$]")
+    setup_boxplot_axis(ax, r"Crossover frequency, $\omega_{c,t}$ [rad s$^{-1}$]")
     ax.set_title("a) Target crossover frequency", y=-0.28, fontweight="bold")
 
     ax = axs1[1]
     bp = ax.boxplot(dist_wc, widths=0.55, patch_artist=False, showfliers=True)
     _style_boxplot(bp)
-    setup_boxplot_axis(ax, r"Disturbance crossover frequency, $\omega_{c,d}$ [rad s$^{-1}$]")
+    setup_boxplot_axis(ax, r"Crossover frequency, $\omega_{c,d}$ [rad s$^{-1}$]")
     ax.set_title("b) Disturbance crossover frequency", y=-0.28, fontweight="bold")
 
     fig1.suptitle("Open-loop crossover frequency by condition", y=0.98, fontsize=13)
@@ -564,14 +564,14 @@ def plot_boxplots_all_conditions(df: pd.DataFrame, outdir: Path = OUTPUT_DIR):
     ax = axs2[0]
     bp = ax.boxplot(target_pm, widths=0.55, patch_artist=False, showfliers=True)
     _style_boxplot(bp)
-    setup_boxplot_axis(ax, r"Target phase margin, $\varphi_{m,t}$ [deg]")
+    setup_boxplot_axis(ax, r"Phase margin, $\varphi_{m,t}$ [deg]")
     ax.axhline(0, color="0.4", linewidth=0.8)
     ax.set_title("a) Target phase margin", y=-0.28, fontweight="bold")
 
     ax = axs2[1]
     bp = ax.boxplot(dist_pm, widths=0.55, patch_artist=False, showfliers=True)
     _style_boxplot(bp)
-    setup_boxplot_axis(ax, r"Disturbance phase margin, $\varphi_{m,d}$ [deg]")
+    setup_boxplot_axis(ax, r"Phase margin, $\varphi_{m,d}$ [deg]")
     ax.axhline(0, color="0.4", linewidth=0.8)
     ax.set_title("b) Disturbance phase margin", y=-0.28, fontweight="bold")
 
