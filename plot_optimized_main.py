@@ -1,4 +1,3 @@
-#plot_optimised_main.py
 import matplotlib
 matplotlib.use("Agg")  # Non-interactive backend — faster file saving, no GUI overhead
 import matplotlib.pyplot as plt
@@ -30,23 +29,61 @@ MEASURED PILOT FREQUENCY RESPONSES
 • C6 = Double integrator (A), motion
 '''
 
-#__________________________________________________
-## BODE PLOTS FOR PILOT RESPONSES
-#__________________________________________________
+
+# =============================================================================
+# Plot style
+# =============================================================================
+plt.rcParams.update({
+    "font.family": "serif",
+    "mathtext.fontset": "stix",
+    "font.size": 11,
+    "axes.labelsize": 14,
+    "axes.titlesize": 13,
+    "xtick.labelsize": 11,
+    "ytick.labelsize": 11,
+    "legend.fontsize": 10,
+    "axes.linewidth": 0.8,
+    "grid.linewidth": 0.7,
+    "figure.facecolor": "white",
+    "axes.facecolor": "white",
+})
+
+FIG_DPI = 220
 
 
+# =============================================================================
+# Bode helpers
+# =============================================================================
 def bode_mag_phase(H):
-    """Return magnitude in dB and unwrapped phase in degrees."""
-    H_abs = np.abs(H)
-    H_db = 20 * np.log10(H_abs)
-    H_ang = np.angle(H, deg=True)
-    H_ang = np.unwrap(H_ang, period=360, axis=0)
-    return H_db, H_ang
+    """Return absolute magnitude and unwrapped phase in degrees."""
+    mag = np.abs(H)
+    phase_deg = np.unwrap(np.angle(H)) * 180.0 / np.pi
+    return mag, phase_deg
 
 
+def setup_bode_axis(ax, ylabel: str, phase_plot: bool = False):
+    ax.set_xscale("log")
+    ax.minorticks_on()
+
+    ax.grid(True, which="major", color="0.70")
+    ax.grid(True, which="minor", color="0.70", linestyle=(0, (1.2, 4.5)))
+
+    ax.set_xlabel(r"$\omega,\ \mathrm{rad\ s^{-1}}$")
+    ax.set_ylabel(ylabel)
+    ax.set_box_aspect(1)
+
+    if phase_plot:
+        ax.axhline(-180, color="0.4", linewidth=0.8)
+    else:
+        ax.axhline(1.0, color="0.4", linewidth=0.8)
+        ax.set_yscale("log")
+
+
+# =============================================================================
+# Worker function
+# =============================================================================
 def run_one(i, j):
     """Run a single subject/condition fit. Executed in a worker process."""
-    # Each worker process gets its own imports
     from Datasetcode import dataset
     import Optimizedpilotfitting_main as opf
 
@@ -63,60 +100,88 @@ def run_one(i, j):
     return i, j, motion, w_FC, vis_data, vest_data, visual_fit, vestib_fit, best_cost, params
 
 
+# =============================================================================
+# Plotting functions
+# =============================================================================
 def save_visual_bode(i, j, w_FC, vis_data, visual_fit):
-    vis_db, vis_ang = bode_mag_phase(vis_data)
-    visual_fit_db, visual_fit_ang = bode_mag_phase(visual_fit)
+    vis_mag, vis_ang = bode_mag_phase(vis_data)
+    fit_mag, fit_ang = bode_mag_phase(visual_fit)
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    fig, axes = plt.subplots(2, 1, figsize=(5.4, 7.2))
+    fig.subplots_adjust(hspace=0.42)
 
-    axes[0].semilogx(w_FC, vis_db, 'o', label="Measured Hpe")
-    axes[0].semilogx(w_FC, visual_fit_db, '-', label="Fitted Hpe")
-    axes[0].set_xlabel("Frequency [rad/s]")
-    axes[0].set_ylabel("Magnitude [dB]")
-    axes[0].set_title(f"Visual Bode Plot - Subject {i}, Condition {j}")
-    axes[0].grid(True, which="both")
-    axes[0].legend()
+    ax = axes[0]
+    setup_bode_axis(ax, r"$|H_{pe}|$", phase_plot=False)
+    ax.plot(w_FC, fit_mag, "k-", linewidth=1.4, label="Fitted $H_{pe}$")
+    ax.plot(w_FC, vis_mag, linestyle="none", marker=r"$\ast$", markersize=9, color="k", label="Measured $H_{pe}$")
+    ax.relim()
+    ax.autoscale_view()
+    ax.set_title("a) Visual magnitude", y=-0.33, fontweight="bold")
 
-    axes[1].semilogx(w_FC, vis_ang, 'o', label="Measured Hpe")
-    axes[1].semilogx(w_FC, visual_fit_ang, '-', label="Fitted Hpe")
-    axes[1].set_xlabel("Frequency [rad/s]")
-    axes[1].set_ylabel("Phase [deg]")
-    axes[1].set_title(f"Visual Bode Plot - Subject {i}, Condition {j}")
-    axes[1].grid(True, which="both")
-    axes[1].legend()
+    ax = axes[1]
+    setup_bode_axis(ax, r"$\angle H_{pe},\ \mathrm{deg}$", phase_plot=True)
+    ax.plot(w_FC, fit_ang, "k-", linewidth=1.4, label="Fitted $H_{pe}$")
+    ax.plot(w_FC, vis_ang, linestyle="none", marker=r"$\ast$", markersize=9, color="k", label="Measured $H_{pe}$")
+    ax.relim()
+    ax.autoscale_view()
+    ax.legend(
+        loc="lower left",
+        frameon=True,
+        fancybox=False,
+        edgecolor="k",
+        borderpad=0.2,
+        handlelength=1.0,
+        handletextpad=0.35,
+    )
+    ax.set_title("b) Visual phase", y=-0.33, fontweight="bold")
 
-    fig.tight_layout()
-    fig.savefig(f"FIGURES/subject_{i}_condition_{j}_visual.png", dpi=200)
+    fig.suptitle(f"Subject {i} — Condition {j} — Visual ($H_{{pe}}$)", y=0.98, fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.savefig(f"FIGURES/subject_{i}_condition_{j}_visual.png", dpi=FIG_DPI, bbox_inches="tight")
     plt.close(fig)
 
 
 def save_vestibular_bode(i, j, w_FC, vest_data, vestib_fit):
-    vest_db, vest_ang = bode_mag_phase(vest_data)
-    vestib_fit_db, vest_fit_ang = bode_mag_phase(vestib_fit)
+    vest_mag, vest_ang = bode_mag_phase(vest_data)
+    fit_mag, fit_ang = bode_mag_phase(vestib_fit)
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    fig, axes = plt.subplots(2, 1, figsize=(5.4, 7.2))
+    fig.subplots_adjust(hspace=0.42)
 
-    axes[0].semilogx(w_FC, vest_db, 's', label="Measured Hpxd")
-    axes[0].semilogx(w_FC, vestib_fit_db, '-', label="Fitted Hpxd")
-    axes[0].set_xlabel("Frequency [rad/s]")
-    axes[0].set_ylabel("Magnitude [dB]")
-    axes[0].set_title(f"Vestibular Bode Plot - Subject {i}, Condition {j}")
-    axes[0].grid(True, which="both")
-    axes[0].legend()
+    ax = axes[0]
+    setup_bode_axis(ax, r"$|H_{pxd}|$", phase_plot=False)
+    ax.plot(w_FC, fit_mag, "k-", linewidth=1.4, label="Fitted $H_{pxd}$")
+    ax.plot(w_FC, vest_mag, linestyle="none", marker=r"$\ast$", markersize=9, color="k", label="Measured $H_{pxd}$")
+    ax.relim()
+    ax.autoscale_view()
+    ax.set_title("a) Vestibular magnitude", y=-0.33, fontweight="bold")
 
-    axes[1].semilogx(w_FC, vest_ang, 's', label="Measured Hpxd")
-    axes[1].semilogx(w_FC, vest_fit_ang, '-', label="Fitted Hpxd")
-    axes[1].set_xlabel("Frequency [rad/s]")
-    axes[1].set_ylabel("Phase [deg]")
-    axes[1].set_title(f"Vestibular Bode Plot - Subject {i}, Condition {j}")
-    axes[1].grid(True, which="both")
-    axes[1].legend()
+    ax = axes[1]
+    setup_bode_axis(ax, r"$\angle H_{pxd},\ \mathrm{deg}$", phase_plot=True)
+    ax.plot(w_FC, fit_ang, "k-", linewidth=1.4, label="Fitted $H_{pxd}$")
+    ax.plot(w_FC, vest_ang, linestyle="none", marker=r"$\ast$", markersize=9, color="k", label="Measured $H_{pxd}$")
+    ax.relim()
+    ax.autoscale_view()
+    ax.legend(
+        loc="lower left",
+        frameon=True,
+        fancybox=False,
+        edgecolor="k",
+        borderpad=0.2,
+        handlelength=1.0,
+        handletextpad=0.35,
+    )
+    ax.set_title("b) Vestibular phase", y=-0.33, fontweight="bold")
 
-    fig.tight_layout()
-    fig.savefig(f"FIGURES/subject_{i}_condition_{j}_vestibular.png", dpi=200)
+    fig.suptitle(f"Subject {i} — Condition {j} — Vestibular ($H_{{pxd}}$)", y=0.98, fontsize=13)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.savefig(f"FIGURES/subject_{i}_condition_{j}_vestibular.png", dpi=FIG_DPI, bbox_inches="tight")
     plt.close(fig)
 
 
+# =============================================================================
+# Main
+# =============================================================================
 if __name__ == "__main__":
     costs = []
     parameters_C1 = np.zeros((6, 11))
@@ -140,7 +205,7 @@ if __name__ == "__main__":
 
             costs.append(cost)
 
-            # Pad params to length 13
+            # Pad params to length 11
             params = list(params)
             while len(params) < 11:
                 params.append(0.0)
@@ -156,6 +221,5 @@ if __name__ == "__main__":
     # Print cost summary
     npcosts = np.array(costs)
     np.save("global_parameters.npy", np.array(global_parameters, dtype=object))
-    
+
     print('mean:', np.mean(npcosts), '\n max:', np.max(npcosts), '\n min', np.min(npcosts))
-    

@@ -520,71 +520,102 @@ def setup_boxplot_axis(ax, ylabel: str):
     ax.set_xticklabels([short_condition_label(c) for c in range(1, 7)])
     ax.set_box_aspect(1)
 
-
 def plot_boxplots_all_conditions(df: pd.DataFrame, outdir: Path = OUTPUT_DIR):
-    conditions = [1, 2, 3, 4, 5, 6]
+    conditions_all = [1, 2, 3, 4, 5, 6]
+    labels_all = [short_condition_label(c) for c in conditions_all]
 
-    # Figure 1: crossover frequencies
-    fig1, axs1 = plt.subplots(1, 2, figsize=(8.6, 4.6))
-    fig1.subplots_adjust(wspace=0.35)
+    boxplot_specs = [
+        ("target_gain_crossover_rad_s", r"Crossover frequency, $\omega_{c,t}$ [rad s$^{-1}$]", conditions_all, labels_all, "target_crossover_frequency"),
+        ("disturbance_gain_crossover_rad_s", r"Crossover frequency, $\omega_{c,d}$ [rad s$^{-1}$]", conditions_all, labels_all, "disturbance_crossover_frequency"),
+        ("target_phase_margin_deg", r"Phase margin, $\varphi_{m,t}$ [deg]", conditions_all, labels_all, "target_phase_margin"),
+        ("disturbance_phase_margin_deg", r"Phase margin, $\varphi_{m,d}$ [deg]", conditions_all, labels_all, "disturbance_phase_margin"),
+    ]
 
-    target_wc = _group_values_by_condition(df, "target_gain_crossover_rad_s", conditions)
-    dist_wc = _group_values_by_condition(df, "disturbance_gain_crossover_rad_s", conditions)
+    for value_col, ylabel, conditions, labels, filename_stub in boxplot_specs:
+        grouped_values = _group_values_by_condition(df, value_col, conditions)
 
-    ax = axs1[0]
-    bp = ax.boxplot(target_wc, widths=0.55, patch_artist=False, showfliers=True)
-    _style_boxplot(bp)
-    setup_boxplot_axis(ax, r"Crossover frequency, $\omega_{c,t}$ [rad s$^{-1}$]")
-    ax.set_title("a) Target crossover frequency", y=-0.28, fontweight="bold")
+        fig, ax = plt.subplots(figsize=(5.2, 5.0))
+        bp = ax.boxplot(grouped_values, widths=0.55, patch_artist=False, showfliers=True)
+        _style_boxplot(bp)
+        setup_boxplot_axis(ax, ylabel)
+        ax.set_xticks(range(1, len(labels) + 1))
+        ax.set_xticklabels(labels)
 
-    ax = axs1[1]
-    bp = ax.boxplot(dist_wc, widths=0.55, patch_artist=False, showfliers=True)
-    _style_boxplot(bp)
-    setup_boxplot_axis(ax, r"Crossover frequency, $\omega_{c,d}$ [rad s$^{-1}$]")
-    ax.set_title("b) Disturbance crossover frequency", y=-0.28, fontweight="bold")
+        fig.tight_layout()
 
-    fig1.suptitle("Open-loop crossover frequency by condition", y=0.98, fontsize=13)
-    fig1.tight_layout(rect=[0, 0, 1, 0.95])
+        if SAVE_FIGURES:
+            fig.savefig(outdir / f"boxplot_{filename_stub}_all_conditions.png", dpi=FIG_DPI, bbox_inches="tight")
 
-    if SAVE_FIGURES:
-        fig1.savefig(outdir / "boxplot_crossover_frequency_all_conditions.png", dpi=FIG_DPI, bbox_inches="tight")
+        if SHOW_FIGURES:
+            plt.show()
+        else:
+            plt.close(fig)
 
-    if SHOW_FIGURES:
-        plt.show()
-    else:
-        plt.close(fig1)
+            
+# def plot_boxplots_all_conditions(df: pd.DataFrame, outdir: Path = OUTPUT_DIR):
+#     conditions = [1, 2, 3, 4, 5, 6]
 
-    # Figure 2: phase margins
-    fig2, axs2 = plt.subplots(1, 2, figsize=(8.6, 4.6))
-    fig2.subplots_adjust(wspace=0.35)
+#     # Figure 1: crossover frequencies
+#     fig1, axs1 = plt.subplots(1, 2, figsize=(8.6, 4.6))
+#     fig1.subplots_adjust(wspace=0.35)
 
-    target_pm = _group_values_by_condition(df, "target_phase_margin_deg", conditions)
-    dist_pm = _group_values_by_condition(df, "disturbance_phase_margin_deg", conditions)
+#     target_wc = _group_values_by_condition(df, "target_gain_crossover_rad_s", conditions)
+#     dist_wc = _group_values_by_condition(df, "disturbance_gain_crossover_rad_s", conditions)
 
-    ax = axs2[0]
-    bp = ax.boxplot(target_pm, widths=0.55, patch_artist=False, showfliers=True)
-    _style_boxplot(bp)
-    setup_boxplot_axis(ax, r"Phase margin, $\varphi_{m,t}$ [deg]")
-    ax.axhline(0, color="0.4", linewidth=0.8)
-    ax.set_title("a) Target phase margin", y=-0.28, fontweight="bold")
+#     ax = axs1[0]
+#     bp = ax.boxplot(target_wc, widths=0.55, patch_artist=False, showfliers=True)
+#     _style_boxplot(bp)
+#     setup_boxplot_axis(ax, r"Crossover frequency, $\omega_{c,t}$ [rad s$^{-1}$]")
+#     ax.set_title("a) Target crossover frequency", y=-0.28, fontweight="bold")
 
-    ax = axs2[1]
-    bp = ax.boxplot(dist_pm, widths=0.55, patch_artist=False, showfliers=True)
-    _style_boxplot(bp)
-    setup_boxplot_axis(ax, r"Phase margin, $\varphi_{m,d}$ [deg]")
-    ax.axhline(0, color="0.4", linewidth=0.8)
-    ax.set_title("b) Disturbance phase margin", y=-0.28, fontweight="bold")
+#     ax = axs1[1]
+#     bp = ax.boxplot(dist_wc, widths=0.55, patch_artist=False, showfliers=True)
+#     _style_boxplot(bp)
+#     setup_boxplot_axis(ax, r"Crossover frequency, $\omega_{c,d}$ [rad s$^{-1}$]")
+#     ax.set_title("b) Disturbance crossover frequency", y=-0.28, fontweight="bold")
 
-    fig2.suptitle("Open-loop phase margin by condition", y=0.98, fontsize=13)
-    fig2.tight_layout(rect=[0, 0, 1, 0.95])
+#     fig1.suptitle("Open-loop crossover frequency by condition", y=0.98, fontsize=13)
+#     fig1.tight_layout(rect=[0, 0, 1, 0.95])
 
-    if SAVE_FIGURES:
-        fig2.savefig(outdir / "boxplot_phase_margin_all_conditions.png", dpi=FIG_DPI, bbox_inches="tight")
+#     if SAVE_FIGURES:
+#         fig1.savefig(outdir / "boxplot_crossover_frequency_all_conditions.png", dpi=FIG_DPI, bbox_inches="tight")
 
-    if SHOW_FIGURES:
-        plt.show()
-    else:
-        plt.close(fig2)
+#     if SHOW_FIGURES:
+#         plt.show()
+#     else:
+#         plt.close(fig1)
+
+#     # Figure 2: phase margins
+#     fig2, axs2 = plt.subplots(1, 2, figsize=(8.6, 4.6))
+#     fig2.subplots_adjust(wspace=0.35)
+
+#     target_pm = _group_values_by_condition(df, "target_phase_margin_deg", conditions)
+#     dist_pm = _group_values_by_condition(df, "disturbance_phase_margin_deg", conditions)
+
+#     ax = axs2[0]
+#     bp = ax.boxplot(target_pm, widths=0.55, patch_artist=False, showfliers=True)
+#     _style_boxplot(bp)
+#     setup_boxplot_axis(ax, r"Phase margin, $\varphi_{m,t}$ [deg]")
+#     ax.axhline(0, color="0.4", linewidth=0.8)
+#     ax.set_title("a) Target phase margin", y=-0.28, fontweight="bold")
+
+#     ax = axs2[1]
+#     bp = ax.boxplot(dist_pm, widths=0.55, patch_artist=False, showfliers=True)
+#     _style_boxplot(bp)
+#     setup_boxplot_axis(ax, r"Phase margin, $\varphi_{m,d}$ [deg]")
+#     ax.axhline(0, color="0.4", linewidth=0.8)
+#     ax.set_title("b) Disturbance phase margin", y=-0.28, fontweight="bold")
+
+#     fig2.suptitle("Open-loop phase margin by condition", y=0.98, fontsize=13)
+#     fig2.tight_layout(rect=[0, 0, 1, 0.95])
+
+#     if SAVE_FIGURES:
+#         fig2.savefig(outdir / "boxplot_phase_margin_all_conditions.png", dpi=FIG_DPI, bbox_inches="tight")
+
+#     if SHOW_FIGURES:
+#         plt.show()
+#     else:
+#         plt.close(fig2)
 
 
 # =============================================================================
