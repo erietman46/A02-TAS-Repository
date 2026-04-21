@@ -380,6 +380,18 @@ def plot_subject_condition(subject: int, condition: int, kc: float = 1.0, outdir
     margins_d = compute_margins(w, L_d)
     margins_t = compute_margins(w, L_t)
 
+    if margins_d["phase_margin_deg"] > 360:
+        margins_d["phase_margin_deg"] = margins_d["phase_margin_deg"] - 360
+        phase_d = phase_d - 360
+        _, phase_d_s = smooth_curve_with_polynomial_regression(w, phase_d)
+    
+    if margins_t["phase_margin_deg"] > 360:
+        margins_t["phase_margin_deg"] = margins_t["phase_margin_deg"] - 360
+        phase_t = phase_t - 360
+        _, phase_t_s = smooth_curve_with_polynomial_regression(w, phase_t)
+
+
+
     fig, axs = plt.subplots(2, 2, figsize=(7.2, 7.2))
     fig.subplots_adjust(wspace=0.30, hspace=0.42)
 
