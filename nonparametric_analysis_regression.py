@@ -544,3 +544,11 @@ if __name__ == "__main__":
     print(OUTPUT_DIR / "open_loop_margins.xlsx")
     print("\nFirst rows of summary:")
     print(summary.head())
+
+
+
+
+
+
+
+

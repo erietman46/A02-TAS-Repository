@@ -88,7 +88,7 @@ for param in params_to_plot:
     plt.figure(figsize=(10, 6))
     data_to_plot = [condition[:, col_idx] for condition in conditions]
     plt.boxplot(data_to_plot, tick_labels=labels, showfliers=False)
-    plt.title(f"Boxplot of {param} across conditions")
+    #plt.title(f"Boxplot of {param} across conditions")
     plt.xlabel("Condition")
     plt.ylabel(param)
     plt.xticks(rotation=45)
