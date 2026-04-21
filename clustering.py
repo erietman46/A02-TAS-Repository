@@ -25,7 +25,22 @@ def scale(array):
     scaled_array = scaler.fit_transform(array)
     return scaled_array
 
+def scale_pilot(conditions, combination, dataset):
+    all_pilots_data = []
+    for pilot in range (1, 7):
+        pilot_data = []
+        for condition in conditions:
+            features = [dataset[f"P{pilot}_C{condition}"][feature] for feature in combination]
+            pilot_data.append(features)
+
+            pilot_data = np.array(pilot_data)
+            pilot_data = pilot_data.transpose(0, 2, 1)
+            pilot_data = pilot_data.reshape(-1, pilot_data.shape[-1])
+            pilot_data = scale(pilot_data)
+            all_pilots_data.append(pilot_data)
+    return np.vstack(all_pilots_data)
 data = {}
+
 for subject in range(1, 7):
     for condition in range(1, 7):
 
@@ -84,88 +99,40 @@ for condition in range(1, 7):
 
 datasets_list = []
 
-Gain_e_u = [globals()[f"Combination_('e', 'u', 'e_stdev', 'u_stdev')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
-Gain_e_u = np.array(Gain_e_u)
-Gain_e_u = Gain_e_u.transpose(0, 2, 1)
-Gain_e_u = reshape(Gain_e_u)
-Gain_e_u = scale(Gain_e_u)
+Gain_e_u = scale_pilot([1, 4], ("e", "u", "e_stdev", "u_stdev"), data)
 datasets_list.append(Gain_e_u)
 
-Gain_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'e_stdev', 'u_stdev', 'de_dt_stdev')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
-Gain_e_u_de_dt = np.array(Gain_e_u_de_dt)
-Gain_e_u_de_dt = Gain_e_u_de_dt.transpose(0, 2, 1)
-Gain_e_u_de_dt = reshape(Gain_e_u_de_dt)
-Gain_e_u_de_dt = scale(Gain_e_u_de_dt)
+Gain_e_u_de_dt = scale_pilot([1, 4], ("e", "u", "de_dt", "e_stdev", "u_stdev", "de_dt_stdev"), data)
 datasets_list.append(Gain_e_u_de_dt)
 
-Gain_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt', 'e_stdev', 'u_stdev', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
-Gain_e_u_du_dt = np.array(Gain_e_u_du_dt)
-Gain_e_u_du_dt = Gain_e_u_du_dt.transpose(0, 2, 1)
-Gain_e_u_du_dt = reshape(Gain_e_u_du_dt)
-Gain_e_u_du_dt = scale(Gain_e_u_du_dt)
+Gain_e_u_du_dt = scale_pilot([1, 4], ("e", "u", "du_dt", "e_stdev", "u_stdev", "du_dt_stdev"), data)
 datasets_list.append(Gain_e_u_du_dt)
 
-Gain_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt', 'e_stdev', 'u_stdev', 'de_dt_stdev', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
-Gain_e_u_de_dt_du_dt = np.array(Gain_e_u_de_dt_du_dt)
-Gain_e_u_de_dt_du_dt = Gain_e_u_de_dt_du_dt.transpose(0, 2, 1)
-Gain_e_u_de_dt_du_dt = reshape(Gain_e_u_de_dt_du_dt)
-Gain_e_u_de_dt_du_dt = scale(Gain_e_u_de_dt_du_dt)
+Gain_e_u_de_dt_du_dt = scale_pilot([1, 4], ("e", "u", "de_dt", "du_dt", "e_stdev", "u_stdev", "de_dt_stdev", "du_dt_stdev"), data)
 datasets_list.append(Gain_e_u_de_dt_du_dt)
 
-Velocity_e_u = [globals()[f"Combination_('e', 'u', 'e_stdev', 'u_stdev')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
-Velocity_e_u = np.array(Velocity_e_u)
-Velocity_e_u = Velocity_e_u.transpose(0, 2, 1)
-Velocity_e_u = reshape(Velocity_e_u)
-Velocity_e_u = scale(Velocity_e_u)
+Velocity_e_u = scale_pilot([2, 5], ("e", "u", "e_stdev", "u_stdev"), data)
 datasets_list.append(Velocity_e_u)
 
-Velocity_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'e_stdev', 'u_stdev', 'de_dt_stdev')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
-Velocity_e_u_de_dt = np.array(Velocity_e_u_de_dt)
-Velocity_e_u_de_dt = Velocity_e_u_de_dt.transpose(0, 2, 1)
-Velocity_e_u_de_dt = reshape(Velocity_e_u_de_dt)
-Velocity_e_u_de_dt = scale(Velocity_e_u_de_dt)
+Velocity_e_u_de_dt = scale_pilot([2, 5], ("e", "u", "de_dt", "e_stdev", "u_stdev", "de_dt_stdev"), data)
 datasets_list.append(Velocity_e_u_de_dt)
 
-Velocity_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt', 'e_stdev', 'u_stdev', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
-Velocity_e_u_du_dt = np.array(Velocity_e_u_du_dt)
-Velocity_e_u_du_dt = Velocity_e_u_du_dt.transpose(0, 2, 1)
-Velocity_e_u_du_dt = reshape(Velocity_e_u_du_dt)
-Velocity_e_u_du_dt = scale(Velocity_e_u_du_dt)
+Velocity_e_u_du_dt = scale_pilot([2, 5], ("e", "u", "du_dt", "e_stdev", "u_stdev", "du_dt_stdev"), data)
 datasets_list.append(Velocity_e_u_du_dt)
 
-Velocity_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt', 'e_stdev', 'u_stdev', 'de_dt_stdev', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
-Velocity_e_u_de_dt_du_dt = np.array(Velocity_e_u_de_dt_du_dt)
-Velocity_e_u_de_dt_du_dt = Velocity_e_u_de_dt_du_dt.transpose(0, 2, 1)
-Velocity_e_u_de_dt_du_dt = reshape(Velocity_e_u_de_dt_du_dt)
-Velocity_e_u_de_dt_du_dt = scale(Velocity_e_u_de_dt_du_dt)
+Velocity_e_u_de_dt_du_dt = scale_pilot([2, 5], ("e", "u", "de_dt", "du_dt", "e_stdev", "u_stdev", "de_dt_stdev", "du_dt_stdev"), data)
 datasets_list.append(Velocity_e_u_de_dt_du_dt)
 
-Acceleration_e_u = [globals()[f"Combination_('e', 'u', 'e_stdev', 'u_stdev')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
-Acceleration_e_u = np.array(Acceleration_e_u)
-Acceleration_e_u = Acceleration_e_u.transpose(0, 2, 1)
-Acceleration_e_u = reshape(Acceleration_e_u)
-Acceleration_e_u = scale(Acceleration_e_u)
+Acceleration_e_u = scale_pilot([3, 6], ("e", "u", "e_stdev", "u_stdev"), data)
 datasets_list.append(Acceleration_e_u)
 
-Acceleration_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'e_stdev', 'u_stdev', 'de_dt_stdev')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
-Acceleration_e_u_de_dt = np.array(Acceleration_e_u_de_dt)
-Acceleration_e_u_de_dt = Acceleration_e_u_de_dt.transpose(0, 2, 1)
-Acceleration_e_u_de_dt = reshape(Acceleration_e_u_de_dt)
-Acceleration_e_u_de_dt = scale(Acceleration_e_u_de_dt)
+Acceleration_e_u_de_dt = scale_pilot([3, 6], ("e", "u", "de_dt", "e_stdev", "u_stdev", "de_dt_stdev"), data)
 datasets_list.append(Acceleration_e_u_de_dt)
 
-Acceleration_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt', 'e_stdev', 'u_stdev', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
-Acceleration_e_u_du_dt = np.array(Acceleration_e_u_du_dt)
-Acceleration_e_u_du_dt = Acceleration_e_u_du_dt.transpose(0, 2, 1)
-Acceleration_e_u_du_dt = reshape(Acceleration_e_u_du_dt)
-Acceleration_e_u_du_dt = scale(Acceleration_e_u_du_dt)
+Acceleration_e_u_du_dt = scale_pilot([3, 6], ("e", "u", "du_dt", "e_stdev", "u_stdev", "du_dt_stdev"), data)
 datasets_list.append(Acceleration_e_u_du_dt)
 
-Acceleration_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt', 'e_stdev', 'u_stdev', 'de_dt_stdev', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
-Acceleration_e_u_de_dt_du_dt = np.array(Acceleration_e_u_de_dt_du_dt)
-Acceleration_e_u_de_dt_du_dt = Acceleration_e_u_de_dt_du_dt.transpose(0, 2, 1)
-Acceleration_e_u_de_dt_du_dt = reshape(Acceleration_e_u_de_dt_du_dt)
-Acceleration_e_u_de_dt_du_dt = scale(Acceleration_e_u_de_dt_du_dt)
+Acceleration_e_u_de_dt_du_dt = scale_pilot([3, 6], ("e", "u", "de_dt", "du_dt", "e_stdev", "u_stdev", "de_dt_stdev", "du_dt_stdev"), data)
 datasets_list.append(Acceleration_e_u_de_dt_du_dt)
 
 hierarchical_clustering = AgglomerativeClustering(n_clusters=2, linkage = "ward")
