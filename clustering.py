@@ -6,11 +6,15 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.decomposition import PCA
 from sklearn.metrics import adjusted_rand_score
 
-def dydx_rms(y, x):
+def dydx(y, x):
     dy = np.diff(y)
     dx = np.diff(x)
     dydx = dy / dx
-    return float(np.sqrt(np.mean(dydx ** 2)))
+    return dydx
+
+def rms(array):
+    rms_value = float(np.sqrt(np.mean(array ** 2)))
+    return rms_value
 
 def reshape(array):
     reshaped_array = array.reshape(-1, array.shape[-1])
@@ -39,11 +43,11 @@ for subject in range(1, 7):
             i_th_item = data_e_array[:, i]
             e_rms_i = float(np.sqrt(np.mean(i_th_item ** 2)))
             e_rms.append(e_rms_i)
-            e_stdev_i = np.std(i_th_item, ddof=1)
+            e_stdev_i = float(np.std(i_th_item))
             e_stdev.append(e_stdev_i)
-            de_dt = dydx_rms(i_th_item, data_t_array)
-            de_dt_rms.append(de_dt)
-            de_dt_stdev_i = np.std(de_dt, ddof=1)
+            de_dt = dydx(i_th_item, data_t_array)
+            de_dt_rms.append(rms(de_dt))
+            de_dt_stdev_i = float(np.std(de_dt))
             de_dt_stdev.append(de_dt_stdev_i)
 
         data_u = data_temp["u"]
@@ -57,18 +61,21 @@ for subject in range(1, 7):
             i_th_item = data_u_array[:, i]
             u_rms_i = float(np.sqrt(np.mean(i_th_item ** 2)))
             u_rms.append(u_rms_i)
-            u_stdev_i = np.std(i_th_item, ddof=1)
+            u_stdev_i = float(np.std(i_th_item))
             u_stdev.append(u_stdev_i)
-            du_dt = dydx_rms(i_th_item, data_t_array)
-            du_dt_rms.append(du_dt)
-            du_dt_stdev_i = np.std(du_dt, ddof=1)
+            du_dt = dydx(i_th_item, data_t_array)
+            du_dt_rms.append(rms(du_dt))
+            du_dt_stdev_i = float(np.std(du_dt))
             du_dt_stdev.append(du_dt_stdev_i)
-        data[(f"P{subject}_C{condition}")] = {"e": e_rms, "e_stdev": e_stdev, "u": u_rms, "u_stdev": u_stdev, "de_dt": de_dt_rms, "de_dt_stdev": de_dt_stdev, "du_dt": du_dt_rms, "du_dt_stdev": du_dt_stdev}
+        data[(f"P{subject}_C{condition}")] = {"e": e_rms, "e_stdev": e_stdev, 
+                                              "u": u_rms, "u_stdev": u_stdev, 
+                                              "de_dt": de_dt_rms, "de_dt_stdev": de_dt_stdev, 
+                                              "du_dt": du_dt_rms, "du_dt_stdev": du_dt_stdev}
 
-combinations = (("e", "e_stdev", "u", "u_stdev"), 
-                ("e", "e_stdev", "u", "u_stdev", "de_dt", "de_dt_stdev"), 
-                ("e", "e_stdev", "u", "u_stdev", "du_dt", "du_dt_stdev"), 
-                ("e", "e_stdev", "u", "u_stdev", "de_dt", "de_dt_stdev", "du_dt", "du_dt_stdev"))
+combinations = (("e", "u", "e_stdev", "u_stdev"), 
+                ("e", "u", "de_dt", "e_stdev", "u_stdev", "de_dt_stdev"), 
+                ("e", "u", "du_dt", "e_stdev", "u_stdev", "du_dt_stdev"), 
+                ("e", "u", "de_dt", "du_dt", "e_stdev", "u_stdev", "de_dt_stdev", "du_dt_stdev"))
 
 for condition in range(1, 7):
     for pilot in range(1, 7):
@@ -77,84 +84,84 @@ for condition in range(1, 7):
 
 datasets_list = []
 
-Gain_e_u = [globals()[f"Combination_('e', 'e_stdev', 'u', 'u_stdev')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
+Gain_e_u = [globals()[f"Combination_('e', 'u', 'e_stdev', 'u_stdev')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
 Gain_e_u = np.array(Gain_e_u)
 Gain_e_u = Gain_e_u.transpose(0, 2, 1)
 Gain_e_u = reshape(Gain_e_u)
 Gain_e_u = scale(Gain_e_u)
 datasets_list.append(Gain_e_u)
 
-Gain_e_u_de_dt = [globals()[f"Combination_('e', 'e_stdev', 'u', 'u_stdev', 'de_dt', 'de_dt_stdev')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
+Gain_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'e_stdev', 'u_stdev', 'de_dt_stdev')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
 Gain_e_u_de_dt = np.array(Gain_e_u_de_dt)
 Gain_e_u_de_dt = Gain_e_u_de_dt.transpose(0, 2, 1)
 Gain_e_u_de_dt = reshape(Gain_e_u_de_dt)
 Gain_e_u_de_dt = scale(Gain_e_u_de_dt)
 datasets_list.append(Gain_e_u_de_dt)
 
-Gain_e_u_du_dt = [globals()[f"Combination_('e', 'e_stdev', 'u', 'u_stdev', 'du_dt', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
+Gain_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt', 'e_stdev', 'u_stdev', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
 Gain_e_u_du_dt = np.array(Gain_e_u_du_dt)
 Gain_e_u_du_dt = Gain_e_u_du_dt.transpose(0, 2, 1)
 Gain_e_u_du_dt = reshape(Gain_e_u_du_dt)
 Gain_e_u_du_dt = scale(Gain_e_u_du_dt)
 datasets_list.append(Gain_e_u_du_dt)
 
-Gain_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'e_stdev', 'u', 'u_stdev', 'de_dt', 'de_dt_stdev', 'du_dt', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
+Gain_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt', 'e_stdev', 'u_stdev', 'de_dt_stdev', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [1, 4] for pilot in range(1, 7)]
 Gain_e_u_de_dt_du_dt = np.array(Gain_e_u_de_dt_du_dt)
 Gain_e_u_de_dt_du_dt = Gain_e_u_de_dt_du_dt.transpose(0, 2, 1)
 Gain_e_u_de_dt_du_dt = reshape(Gain_e_u_de_dt_du_dt)
 Gain_e_u_de_dt_du_dt = scale(Gain_e_u_de_dt_du_dt)
 datasets_list.append(Gain_e_u_de_dt_du_dt)
 
-Velocity_e_u = [globals()[f"Combination_('e', 'e_stdev', 'u', 'u_stdev')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
+Velocity_e_u = [globals()[f"Combination_('e', 'u', 'e_stdev', 'u_stdev')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
 Velocity_e_u = np.array(Velocity_e_u)
 Velocity_e_u = Velocity_e_u.transpose(0, 2, 1)
 Velocity_e_u = reshape(Velocity_e_u)
 Velocity_e_u = scale(Velocity_e_u)
 datasets_list.append(Velocity_e_u)
 
-Velocity_e_u_de_dt = [globals()[f"Combination_('e', 'e_stdev', 'u', 'u_stdev', 'de_dt', 'de_dt_stdev')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
+Velocity_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'e_stdev', 'u_stdev', 'de_dt_stdev')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
 Velocity_e_u_de_dt = np.array(Velocity_e_u_de_dt)
 Velocity_e_u_de_dt = Velocity_e_u_de_dt.transpose(0, 2, 1)
 Velocity_e_u_de_dt = reshape(Velocity_e_u_de_dt)
 Velocity_e_u_de_dt = scale(Velocity_e_u_de_dt)
 datasets_list.append(Velocity_e_u_de_dt)
 
-Velocity_e_u_du_dt = [globals()[f"Combination_('e', 'e_stdev', 'u', 'u_stdev', 'du_dt', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
+Velocity_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt', 'e_stdev', 'u_stdev', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
 Velocity_e_u_du_dt = np.array(Velocity_e_u_du_dt)
 Velocity_e_u_du_dt = Velocity_e_u_du_dt.transpose(0, 2, 1)
 Velocity_e_u_du_dt = reshape(Velocity_e_u_du_dt)
 Velocity_e_u_du_dt = scale(Velocity_e_u_du_dt)
 datasets_list.append(Velocity_e_u_du_dt)
 
-Velocity_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'e_stdev', 'u', 'u_stdev', 'de_dt', 'de_dt_stdev', 'du_dt', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
+Velocity_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt', 'e_stdev', 'u_stdev', 'de_dt_stdev', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [2, 5] for pilot in range(1, 7)]
 Velocity_e_u_de_dt_du_dt = np.array(Velocity_e_u_de_dt_du_dt)
 Velocity_e_u_de_dt_du_dt = Velocity_e_u_de_dt_du_dt.transpose(0, 2, 1)
 Velocity_e_u_de_dt_du_dt = reshape(Velocity_e_u_de_dt_du_dt)
 Velocity_e_u_de_dt_du_dt = scale(Velocity_e_u_de_dt_du_dt)
 datasets_list.append(Velocity_e_u_de_dt_du_dt)
 
-Acceleration_e_u = [globals()[f"Combination_('e', 'e_stdev', 'u', 'u_stdev')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
+Acceleration_e_u = [globals()[f"Combination_('e', 'u', 'e_stdev', 'u_stdev')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
 Acceleration_e_u = np.array(Acceleration_e_u)
 Acceleration_e_u = Acceleration_e_u.transpose(0, 2, 1)
 Acceleration_e_u = reshape(Acceleration_e_u)
 Acceleration_e_u = scale(Acceleration_e_u)
 datasets_list.append(Acceleration_e_u)
 
-Acceleration_e_u_de_dt = [globals()[f"Combination_('e', 'e_stdev', 'u', 'u_stdev', 'de_dt', 'de_dt_stdev')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
+Acceleration_e_u_de_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'e_stdev', 'u_stdev', 'de_dt_stdev')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
 Acceleration_e_u_de_dt = np.array(Acceleration_e_u_de_dt)
 Acceleration_e_u_de_dt = Acceleration_e_u_de_dt.transpose(0, 2, 1)
 Acceleration_e_u_de_dt = reshape(Acceleration_e_u_de_dt)
 Acceleration_e_u_de_dt = scale(Acceleration_e_u_de_dt)
 datasets_list.append(Acceleration_e_u_de_dt)
 
-Acceleration_e_u_du_dt = [globals()[f"Combination_('e', 'e_stdev', 'u', 'u_stdev', 'du_dt', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
+Acceleration_e_u_du_dt = [globals()[f"Combination_('e', 'u', 'du_dt', 'e_stdev', 'u_stdev', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
 Acceleration_e_u_du_dt = np.array(Acceleration_e_u_du_dt)
 Acceleration_e_u_du_dt = Acceleration_e_u_du_dt.transpose(0, 2, 1)
 Acceleration_e_u_du_dt = reshape(Acceleration_e_u_du_dt)
 Acceleration_e_u_du_dt = scale(Acceleration_e_u_du_dt)
 datasets_list.append(Acceleration_e_u_du_dt)
 
-Acceleration_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'e_stdev', 'u', 'u_stdev', 'de_dt', 'de_dt_stdev', 'du_dt', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
+Acceleration_e_u_de_dt_du_dt = [globals()[f"Combination_('e', 'u', 'de_dt', 'du_dt', 'e_stdev', 'u_stdev', 'de_dt_stdev', 'du_dt_stdev')_P_{pilot}_C{condition}"] for condition in [3, 6] for pilot in range(1, 7)]
 Acceleration_e_u_de_dt_du_dt = np.array(Acceleration_e_u_de_dt_du_dt)
 Acceleration_e_u_de_dt_du_dt = Acceleration_e_u_de_dt_du_dt.transpose(0, 2, 1)
 Acceleration_e_u_de_dt_du_dt = reshape(Acceleration_e_u_de_dt_du_dt)
