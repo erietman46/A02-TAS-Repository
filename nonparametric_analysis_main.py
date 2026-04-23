@@ -390,8 +390,6 @@ def plot_subject_condition(subject: int, condition: int, kc: float = 1.0, outdir
         phase_t = phase_t - 360
         _, phase_t_s = smooth_curve_with_polynomial_regression(w, phase_t)
 
-
-
     fig, axs = plt.subplots(2, 2, figsize=(7.2, 7.2))
     fig.subplots_adjust(wspace=0.30, hspace=0.42)
 
