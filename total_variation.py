@@ -1,5 +1,5 @@
 from preprocessing import pilots
-import statistics
+import stats
 import numpy as np
 import pandas as pd
 
@@ -20,7 +20,7 @@ def total_variation():
         index=[f"Pilot {i + 1}" for i in range(6)],
         columns=[f"C{i + 1}" for i in range(6)]
     )
-    res = statistics.statistics(np.array(variation))
+    res = stats.statistics(np.array(variation))
     results = pd.DataFrame(
         res,
         index=[f"C{i + 1}" for i in range(3)],

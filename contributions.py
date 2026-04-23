@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from preprocessing import pilots
 import pandas as pd
-import statistics
+import stats
 
 def helper(u):
 
@@ -86,34 +86,34 @@ def helper(u):
     mean_per_ft = 100 * mean_ft / total_mean
     mean_per_noise = 100 * mean_noise / total_mean
 
-    # print("\nAverages:")
-    # print(f"Disturbance: {mean_fd:.4f} ({100 * mean_fd / total_mean:.1f}%)")
-    # print(f"Target:      {mean_ft:.4f} ({100 * mean_ft / total_mean:.1f}%)")
-    # print(f"Noise:       {mean_noise:.4f} ({100 * mean_noise / total_mean:.1f}%)")
-    #
-    # # ==============================
-    # # STACKED BAR PLOT
-    # # ==============================
-    # varS = np.vstack((var_fd, var_ft, var_noise)).T
-    #
-    # plt.figure()
-    # plt.bar(range(1, n_runs + 1), varS[:, 0], label="f_d")
-    # plt.bar(range(1, n_runs + 1), varS[:, 1], bottom=varS[:, 0], label="f_t")
-    # plt.bar(range(1, n_runs + 1), varS[:, 2], bottom=varS[:, 0] + varS[:, 1], label="noise")
-    #
-    # plt.xlabel("Run #")
-    # plt.ylabel("Variance of u")
-    # plt.title("Variance Decomposition of Pilot Input")
-    # plt.legend()
-    # plt.grid(True)
-    # plt.show()
-    #
-    # # ==============================
-    # # OPTIONAL: sanity check
-    # # ==============================
-    # print("\nTime vs frequency domain variance check:")
-    # for i in range(n_runs):
-    #     print(f"Run {i + 1}: time={var_time[i]:.4f}, freq={var_total[i]:.4f}")
+    print("\nAverages:")
+    print(f"Disturbance: {mean_fd:.4f} ({100 * mean_fd / total_mean:.1f}%)")
+    print(f"Target:      {mean_ft:.4f} ({100 * mean_ft / total_mean:.1f}%)")
+    print(f"Noise:       {mean_noise:.4f} ({100 * mean_noise / total_mean:.1f}%)")
+
+    # ==============================
+    # STACKED BAR PLOT
+    # ==============================
+    varS = np.vstack((var_fd, var_ft, var_noise)).T
+
+    plt.figure()
+    plt.bar(range(1, n_runs + 1), varS[:, 0], label="f_d")
+    plt.bar(range(1, n_runs + 1), varS[:, 1], bottom=varS[:, 0], label="f_t")
+    plt.bar(range(1, n_runs + 1), varS[:, 2], bottom=varS[:, 0] + varS[:, 1], label="noise")
+
+    plt.xlabel("Run #")
+    plt.ylabel("Variance of u")
+    plt.title("Variance Decomposition of Pilot Input")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+    # ==============================
+    # OPTIONAL: sanity check
+    # ==============================
+    print("\nTime vs frequency domain variance check:")
+    for i in range(n_runs):
+        print(f"Run {i + 1}: time={var_time[i]:.4f}, freq={var_total[i]:.4f}")
 
     return mean_per_fd, mean_per_ft, mean_per_noise
 
@@ -134,7 +134,7 @@ def contributions():
         index=[f"Pilot {i + 1}" for i in range(6)],
         columns=[f"C{i + 1}" for i in range(6)]
     )
-    res1 = statistics.statistics(np.array(metric_disturbance))
+    res1 = stats.statistics(np.array(metric_disturbance))
     results1 = pd.DataFrame(
         res1,
         index=[f"C{i + 1}" for i in range(3)],
@@ -145,7 +145,7 @@ def contributions():
         index=[f"Pilot {i + 1}" for i in range(6)],
         columns=[f"C{i + 1}" for i in range(6)]
     )
-    res2 = statistics.statistics(np.array(metric_target))
+    res2 = stats.statistics(np.array(metric_target))
     results2 = pd.DataFrame(
         res2,
         index=[f"C{i + 1}" for i in range(3)],
@@ -156,7 +156,7 @@ def contributions():
         index=[f"Pilot {i + 1}" for i in range(6)],
         columns=[f"C{i + 1}" for i in range(6)]
     )
-    res3 = statistics.statistics(np.array(metric_noise))
+    res3 = stats.statistics(np.array(metric_noise))
     results3 = pd.DataFrame(
         res3,
         index=[f"C{i + 1}" for i in range(3)],
@@ -164,3 +164,5 @@ def contributions():
     )
 
     return df1, results1, df2, results2, df3, results3
+
+helper(np.array(pilots[2]["C6"]["u"]))

@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 import pandas as pd
-import statistics
+import stats
 
 def interval(errors):
     #determines the mean and the 1 sigma interval width
@@ -48,7 +48,7 @@ def error_pdf():
         index=[f"Pilot {i + 1}" for i in range(6)],
         columns=[f"C{i + 1}" for i in range(6)]
     )
-    res = statistics.statistics(np.array(clean_mus))
+    res = stats.statistics(np.array(clean_mus))
     results = pd.DataFrame(
         res,
         index=[f"C{i + 1}" for i in range(3)],
@@ -59,11 +59,11 @@ def error_pdf():
         index=[f"Pilot {i + 1}" for i in range(6)],
         columns=[f"C{i + 1}" for i in range(6)]
     )
-    res2 = statistics.statistics(np.array(clean_sigmas))
+    res2 = stats.statistics(np.array(clean_sigmas))
     results2 = pd.DataFrame(
         res2,
         index=[f"C{i + 1}" for i in range(3)],
         columns=["p_val", "effect_size"]
     )
 
-    return df, results, df2, results2
+    return df, results, df2, results2, np.array(clean_sigmas)

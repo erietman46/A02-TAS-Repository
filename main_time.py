@@ -45,7 +45,7 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
             cell.fill = highlight
 
     # === Mean and 1-sigma Interval of e ===
-    data3, stat_res3, data4, stat_res4 = error_pdf()
+    data3, stat_res3, data4, stat_res4, clean_sigmas = error_pdf()
 
     data4.to_excel(writer, sheet_name="ErrorPDF_data")
     stat_res4.to_excel(writer, sheet_name="ErrorPDF_stats")
@@ -58,7 +58,7 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
             cell.fill = highlight
 
     # === RMS of e ===
-    data5, stat_res5 = RMS_error()
+    data5, stat_res5, errors = RMS_error()
 
     data5.to_excel(writer, sheet_name="RMSe_data")
     stat_res5.to_excel(writer, sheet_name="RMSe_stats")
@@ -84,7 +84,7 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
             cell.fill = highlight
 
     # === RMS of DERe ===
-    data7, stat_res7 = RMS_DERe()
+    data7, stat_res7, errors_d = RMS_DERe()
 
     data7.to_excel(writer, sheet_name="RMSDERe_data")
     stat_res7.to_excel(writer, sheet_name="RMSDERe_stats")

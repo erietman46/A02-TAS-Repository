@@ -1,5 +1,5 @@
 from preprocessing import pilots
-import statistics
+import stats
 import numpy as np
 import pandas as pd
 
@@ -37,11 +37,11 @@ def RMS_error():
         index=[f"Pilot {i + 1}" for i in range(6)],
         columns=[f"C{i + 1}" for i in range(6)]
     )
-    res = statistics.statistics(np.array(errors))
+    res = stats.statistics(np.array(errors))
     results = pd.DataFrame(
         res,
         index=[f"C{i + 1}" for i in range(3)],
         columns=["p_val", "effect_size"]
     )
 
-    return df, results
+    return df, results, np.array(errors)

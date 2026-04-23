@@ -1,7 +1,7 @@
 from preprocessing import pilots
 import numpy as np
 import pandas as pd
-import statistics
+import stats
 
 def RMS_DERe():
     #Array to store RMS derivative of errors
@@ -41,11 +41,11 @@ def RMS_DERe():
         columns=[f"C{i+1}" for i in range(6)]
     )
 
-    res = statistics.statistics(np.array(errors_d))
+    res = stats.statistics(np.array(errors_d))
     results = pd.DataFrame(
         res,
         index=[f"C{i + 1}" for i in range(3)],
         columns=["p_val", "effect_size"]
     )
 
-    return df, results
+    return df, results, np.array(errors_d)

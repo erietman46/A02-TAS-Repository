@@ -1,5 +1,5 @@
 from preprocessing import pilots
-import statistics
+import stats
 import numpy as np
 import pandas as pd
 
@@ -24,7 +24,7 @@ def zero_crossings():
         index=[f"Pilot {i + 1}" for i in range(6)],
         columns=[f"C{i + 1}" for i in range(6)]
     )
-    res = statistics.statistics(np.array(crossings))
+    res = stats.statistics(np.array(crossings))
     results = pd.DataFrame(
         res,
         index=[f"C{i + 1}" for i in range(3)],

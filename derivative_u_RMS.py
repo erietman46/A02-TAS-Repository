@@ -1,7 +1,7 @@
 from preprocessing import pilots
 import numpy as np
 import pandas as pd
-import statistics
+import stats
 
 def RMS_DERu():
     #Array to store RMS derivative of inputs
@@ -42,7 +42,7 @@ def RMS_DERu():
     )
     print(f"\nMean RMS: \n{df}")
 
-    res = statistics.statistics(np.array(U_d))
+    res = stats.statistics(np.array(U_d))
     results = pd.DataFrame(
         res,
         index=[f"C{i + 1}" for i in range(3)],
