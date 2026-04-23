@@ -31,14 +31,14 @@ def scale_pilot(conditions, combination, dataset):
         pilot_data = []
         for condition in conditions:
             features = [dataset[f"P{pilot}_C{condition}"][feature] for feature in combination]
-            pilot_data.append(features)
-
-            pilot_data = np.array(pilot_data)
-            pilot_data = pilot_data.transpose(0, 2, 1)
-            pilot_data = pilot_data.reshape(-1, pilot_data.shape[-1])
-            pilot_data = scale(pilot_data)
-            all_pilots_data.append(pilot_data)
-    return np.vstack(all_pilots_data)
+            pilot_array = np.array(features).T
+            pilot_data.append(pilot_array)
+        pilot_combined = np.vstack(pilot_data)
+        scaled_pilot = scale(pilot_combined)
+        all_pilots_data.append(scaled_pilot)
+    all_pilots_combined = np.vstack(all_pilots_data)
+    return all_pilots_combined
+        
 data = {}
 
 for subject in range(1, 7):
