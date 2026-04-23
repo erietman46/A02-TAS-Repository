@@ -23,7 +23,7 @@ def generate_individual_plots(data_dict, numbers, p_values, effect_sizes, units_
         labels = ['Fixed-Base', 'Motion-Base']
 
         # 1. Draw the Boxplot
-        sns.boxplot(data=plot_data, palette="Pastel1", width=0.5, showfliers=False)
+        sns.boxplot(data=plot_data, color="white", width=0.5, showfliers=False)
 
         # 2. Add Strip Plot (Individual dots)
         sns.stripplot(data=plot_data, color="black", size=7, jitter=False, alpha=0.8)
