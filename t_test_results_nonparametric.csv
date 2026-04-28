@@ -1,0 +1,13 @@
+metric_block,metric,cond_a,cond_b,cond_a_name,cond_b_name,n_a,n_b,mean_a,mean_b,t_stat,p_value
+disturbance,gain_crossover_rad_s,1,4,Fixed-base Position,Motion-base Position,5,6,1.9746283511062128,2.0929029108769877,-0.4243077856383582,0.6827169206752113
+disturbance,phase_margin_deg,1,4,Fixed-base Position,Motion-base Position,5,6,85.44345243515633,83.21435696778433,0.2057799104872423,0.8417430426256992
+target,gain_crossover_rad_s,1,4,Fixed-base Position,Motion-base Position,5,6,1.9746283511062128,1.712612364221182,0.8537657025077566,0.4159157303815712
+target,phase_margin_deg,1,4,Fixed-base Position,Motion-base Position,5,6,85.44345243515633,80.54170862371286,0.45790155860195375,0.6584793166004842
+disturbance,gain_crossover_rad_s,2,5,Fixed-base Velocity,Motion-base Velocity,6,6,2.2044947562289265,2.466973640018441,-1.2136647184421925,0.2535606337775512
+disturbance,phase_margin_deg,2,5,Fixed-base Velocity,Motion-base Velocity,6,6,61.07220367786212,54.03537759298633,1.1328295335318732,0.28704857595050115
+target,gain_crossover_rad_s,2,5,Fixed-base Velocity,Motion-base Velocity,6,6,2.2044947562289265,1.8038123025856674,1.6107849669347316,0.14255744073420445
+target,phase_margin_deg,2,5,Fixed-base Velocity,Motion-base Velocity,6,6,61.07220367786212,62.11451513758883,-0.20602531228863855,0.8409104690904631
+disturbance,gain_crossover_rad_s,3,6,Fixed-base Acceleration,Motion-base Acceleration,6,6,2.2942907316781986,3.0243605929879647,-2.6645513905376768,0.025375547052170776
+disturbance,phase_margin_deg,3,6,Fixed-base Acceleration,Motion-base Acceleration,6,6,24.853065432686282,23.88242495517396,0.33448928675049294,0.7454150672218389
+target,gain_crossover_rad_s,3,6,Fixed-base Acceleration,Motion-base Acceleration,6,6,2.2942907316781986,2.1766599079567612,0.4291779431058755,0.6776684454423079
+target,phase_margin_deg,3,6,Fixed-base Acceleration,Motion-base Acceleration,6,6,24.853065432686282,44.986229745350364,-4.773086308843579,0.0011374140027232114

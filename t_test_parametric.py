@@ -1,6 +1,6 @@
 import numpy as np
-import pingouin as pg
 import scipy.stats as stats
+import pandas as pd
 
 Kp_1 = np.array([2.8393662134188467, 1.836821482758494, 3.1801623854378867, 5.181775611925449, 1.8745183024137162, 0.9411808566023323])
 Tl_1 = np.array([0.44487717661280446, 0.5779416370198365, 0.49337704244363095, 0.3240331840060654, 0.532604939005592, 1.6293131705067347])
@@ -52,73 +52,74 @@ zeta_nm_6 = np.array([0.2519756404071337, 0.2366969569374448, 0.2867410349014435
 Km_6 = np.array([0.33469220653113113, 0.3241086732596328, 0.2707381246634805, 0.37772087949916167, 0.6502853315555595, 0.332741035313485])
 tau_m_6 = np.array([0.27077729474540346, 0.25328285051602833, 0.23879146892254183, 0.20519983764789523, 0.22305139899884807, 0.2677241861741709])
 
+def ttest_to_row(group, metric, a_name, a, b_name, b, equal_var=False):
+    """
+    Runs an independent two-sample t-test and returns a dict suitable for a CSV row.
+    - equal_var=False uses Welch's t-test (usually safer when variances may differ).
+    """
+    res = stats.ttest_ind(a, b, equal_var=equal_var, nan_policy="omit")
+    return {
+        "group": group,
+        "metric": metric,
+        "cond_a": a_name,
+        "cond_b": b_name,
+        "n_a": int(np.sum(~np.isnan(a))),
+        "n_b": int(np.sum(~np.isnan(b))),
+        "mean_a": float(np.nanmean(a)),
+        "mean_b": float(np.nanmean(b)),
+        "t_stat": float(res.statistic),
+        "p_value": float(res.pvalue),
+    }
 
-
-# ... [all other original arrays unchanged: Kp_2, Tl_2, Ti_2, etc. through tau_m_6] ...
-
-import numpy as np
-import scipy.stats as stats
-
-# ... [all your arrays defined as before] ...
+rows = []
 
 # === VELOCITY CONDITIONS (c2 vs c5) ===
 print("=== VELOCITY t‑test (c2 vs c5) ===")
-t_Kp_velocity = stats.ttest_ind(Kp_2, Kp_5)
-print("Kp Velocity: t =", t_Kp_velocity.statistic, ", p =", t_Kp_velocity.pvalue)
-
-t_Tl_velocity = stats.ttest_ind(Tl_2, Tl_5)
-print("Tl Velocity: t =", t_Tl_velocity.statistic, ", p =", t_Tl_velocity.pvalue)
-
-t_Ti_velocity = stats.ttest_ind(Ti_2, Ti_5)
-print("Ti Velocity: t =", t_Ti_velocity.statistic, ", p =", t_Ti_velocity.pvalue)
-
-t_tau_velocity = stats.ttest_ind(tau_2, tau_5)
-print("tau Velocity: t =", t_tau_velocity.statistic, ", p =", t_tau_velocity.pvalue)
-
-t_omega_velocity = stats.ttest_ind(omega_nm_2, omega_nm_5)
-print("omega_nm Velocity: t =", t_omega_velocity.statistic, ", p =", t_omega_velocity.pvalue)
-
-t_zeta_velocity = stats.ttest_ind(zeta_nm_2, zeta_nm_5)
-print("zeta_nm Velocity: t =", t_zeta_velocity.statistic, ", p =", t_zeta_velocity.pvalue)
-
+pairs_velocity = [
+    ("Kp", Kp_2, Kp_5),
+    ("Tl", Tl_2, Tl_5),
+    ("Ti", Ti_2, Ti_5),
+    ("tau", tau_2, tau_5),
+    ("omega_nm", omega_nm_2, omega_nm_5),
+    ("zeta_nm", zeta_nm_2, zeta_nm_5),
+]
+for metric, a, b in pairs_velocity:
+    r = ttest_to_row("velocity", metric, "c2", a, "c5", b)
+    rows.append(r)
+    print(f"{metric} Velocity: t = {r['t_stat']}, p = {r['p_value']}")
 
 # === ACCELERATION CONDITIONS (c3 vs c6) ===
 print("\n=== ACCELERATION t‑test (c3 vs c6) ===")
-t_Kp_acceleration = stats.ttest_ind(Kp_3, Kp_6)
-print("Kp Acceleration: t =", t_Kp_acceleration.statistic, ", p =", t_Kp_acceleration.pvalue)
-
-t_Tl_acceleration = stats.ttest_ind(Tl_3, Tl_6)
-print("Tl Acceleration: t =", t_Tl_acceleration.statistic, ", p =", t_Tl_acceleration.pvalue)
-
-t_Ti_acceleration = stats.ttest_ind(Ti_3, Ti_6)
-print("Ti Acceleration: t =", t_Ti_acceleration.statistic, ", p =", t_Ti_acceleration.pvalue)
-
-t_tau_acceleration = stats.ttest_ind(tau_3, tau_6)
-print("tau Acceleration: t =", t_tau_acceleration.statistic, ", p =", t_tau_acceleration.pvalue)
-
-t_omega_acceleration = stats.ttest_ind(omega_nm_3, omega_nm_6)
-print("omega_nm Acceleration: t =", t_omega_acceleration.statistic, ", p =", t_omega_acceleration.pvalue)
-
-t_zeta_acceleration = stats.ttest_ind(zeta_nm_3, zeta_nm_6)
-print("zeta_nm Acceleration: t =", t_zeta_acceleration.statistic, ", p =", t_zeta_acceleration.pvalue)
-
+pairs_accel = [
+    ("Kp", Kp_3, Kp_6),
+    ("Tl", Tl_3, Tl_6),
+    ("Ti", Ti_3, Ti_6),
+    ("tau", tau_3, tau_6),
+    ("omega_nm", omega_nm_3, omega_nm_6),
+    ("zeta_nm", zeta_nm_3, zeta_nm_6),
+]
+for metric, a, b in pairs_accel:
+    r = ttest_to_row("acceleration", metric, "c3", a, "c6", b)
+    rows.append(r)
+    print(f"{metric} Acceleration: t = {r['t_stat']}, p = {r['p_value']}")
 
 # === POSITION REFERENCE (c1 vs c4) ===
 print("\n=== POSITION t‑test (c1 vs c4) ===")
-t_Kp_position = stats.ttest_ind(Kp_1, Kp_4)
-print("Kp Position: t =", t_Kp_position.statistic, ", p =", t_Kp_position.pvalue)
+pairs_position = [
+    ("Kp", Kp_1, Kp_4),
+    ("Tl", Tl_1, Tl_4),
+    ("Ti", Ti_1, Ti_4),
+    ("tau", tau_1, tau_4),
+    ("omega_nm", omega_nm_1, omega_nm_4),
+    ("zeta_nm", zeta_nm_1, zeta_nm_4),
+]
+for metric, a, b in pairs_position:
+    r = ttest_to_row("position", metric, "c1", a, "c4", b)
+    rows.append(r)
+    print(f"{metric} Position: t = {r['t_stat']}, p = {r['p_value']}")
 
-t_Tl_position = stats.ttest_ind(Tl_1, Tl_4)
-print("Tl Position: t =", t_Tl_position.statistic, ", p =", t_Tl_position.pvalue)
-
-t_Ti_position = stats.ttest_ind(Ti_1, Ti_4)
-print("Ti Position: t =", t_Ti_position.statistic, ", p =", t_Ti_position.pvalue)
-
-t_tau_position = stats.ttest_ind(tau_1, tau_4)
-print("tau Position: t =", t_tau_position.statistic, ", p =", t_tau_position.pvalue)
-
-t_omega_position = stats.ttest_ind(omega_nm_1, omega_nm_4)
-print("omega_nm Position: t =", t_omega_position.statistic, ", p =", t_omega_position.pvalue)
-
-t_zeta_position = stats.ttest_ind(zeta_nm_1, zeta_nm_4)
-print("zeta_nm Position: t =", t_zeta_position.statistic, ", p =", t_zeta_position.pvalue)
+# --- Export to CSV ---
+df = pd.DataFrame(rows)
+out_path = "t_test_results_parametric.csv"
+df.to_csv(out_path, index=False)
+print(f"\nSaved t-test results to: {out_path}")
