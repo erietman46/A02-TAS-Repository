@@ -114,10 +114,10 @@ param_to_col = {p: i for i, p in enumerate(all_params_original)}
 
 #Find mean values for the parameters
 with open('parametric_mean_values.txt', 'w') as mns:
-    mns.write('Condition \t Parameter \t Mean Value \n')
+    mns.write('Condition,Parameter,Mean Value,All Values\n')
     for j in range(len(global_parameters)):
         for i in range(len(all_params_original)):
-            mns.write(f'C{j+1} \t \t \t {all_params_original[i]} \t \t {np.mean(global_parameters[j,:,i])} \n')
+            mns.write(f'{j+1},{all_params_original[i]},{np.mean(global_parameters[j,:,i])},{global_parameters[j,:,i].tolist()}\n')
 
 # Boxplot helpers
 def _style_boxplot(bp):
