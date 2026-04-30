@@ -519,7 +519,7 @@ def setup_boxplot_axis(ax, ylabel: str):
     ax.set_box_aspect(1)
 
 def plot_boxplots_all_conditions(df: pd.DataFrame, outdir: Path = OUTPUT_DIR):
-    conditions_all = [1, 2, 3, 4, 5, 6]
+    conditions_all = [1, 4, 2, 5, 3, 6]
     labels_all = [short_condition_label(c) for c in conditions_all]
 
     boxplot_specs = [
