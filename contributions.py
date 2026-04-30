@@ -86,27 +86,27 @@ def helper(u):
     mean_per_ft = 100 * mean_ft / total_mean
     mean_per_noise = 100 * mean_noise / total_mean
 
-    print("\nAverages:")
-    print(f"Disturbance: {mean_fd:.4f} ({100 * mean_fd / total_mean:.1f}%)")
-    print(f"Target:      {mean_ft:.4f} ({100 * mean_ft / total_mean:.1f}%)")
-    print(f"Noise:       {mean_noise:.4f} ({100 * mean_noise / total_mean:.1f}%)")
-
-    # ==============================
-    # STACKED BAR PLOT
-    # ==============================
-    varS = np.vstack((var_fd, var_ft, var_noise)).T
-
-    plt.figure()
-    plt.bar(range(1, n_runs + 1), varS[:, 0], label="f_d")
-    plt.bar(range(1, n_runs + 1), varS[:, 1], bottom=varS[:, 0], label="f_t")
-    plt.bar(range(1, n_runs + 1), varS[:, 2], bottom=varS[:, 0] + varS[:, 1], label="noise")
-
-    plt.xlabel("Run #")
-    plt.ylabel("Variance of u")
-    plt.title("Variance Decomposition of Pilot Input")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+    # print("\nAverages:")
+    # print(f"Disturbance: {mean_fd:.4f} ({100 * mean_fd / total_mean:.1f}%)")
+    # print(f"Target:      {mean_ft:.4f} ({100 * mean_ft / total_mean:.1f}%)")
+    # print(f"Noise:       {mean_noise:.4f} ({100 * mean_noise / total_mean:.1f}%)")
+    #
+    # # ==============================
+    # # STACKED BAR PLOT
+    # # ==============================
+    # varS = np.vstack((var_fd, var_ft, var_noise)).T
+    #
+    # plt.figure()
+    # plt.bar(range(1, n_runs + 1), varS[:, 0], label="f_d")
+    # plt.bar(range(1, n_runs + 1), varS[:, 1], bottom=varS[:, 0], label="f_t")
+    # plt.bar(range(1, n_runs + 1), varS[:, 2], bottom=varS[:, 0] + varS[:, 1], label="noise")
+    #
+    # plt.xlabel("Run #")
+    # plt.ylabel("Variance of u")
+    # plt.title("Variance Decomposition of Pilot Input")
+    # plt.legend()
+    # plt.grid(True)
+    # plt.show()
 
     # ==============================
     # OPTIONAL: sanity check
@@ -163,6 +163,6 @@ def contributions():
         columns=["p_val", "effect_size"]
     )
 
-    return df1, results1, df2, results2, df3, results3
+    return df1, results1, df2, results2, df3, results3, np.array(metric_disturbance), np.array(metric_target), np.array(metric_noise)
 
 helper(np.array(pilots[2]["C6"]["u"]))

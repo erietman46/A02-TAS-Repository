@@ -31,4 +31,4 @@ def zero_crossings():
         columns=["p_val", "effect_size"]
     )
 
-    return df, results
+    return df, results, np.array(crossings)

@@ -27,4 +27,4 @@ def total_variation():
         columns=["p_val", "effect_size"]
     )
 
-    return df, results
+    return df, results, np.array(variation)

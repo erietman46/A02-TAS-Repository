@@ -66,4 +66,4 @@ def error_pdf():
         columns=["p_val", "effect_size"]
     )
 
-    return df, results, df2, results2, np.array(clean_sigmas)
+    return df, results, df2, results2, np.array(clean_mus), np.array(clean_sigmas)

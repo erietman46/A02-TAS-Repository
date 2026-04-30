@@ -46,4 +46,4 @@ def RMS_input():
         columns=["p_val", "effect_size"]
     )
 
-    return df, results
+    return df, results, np.array(u)
