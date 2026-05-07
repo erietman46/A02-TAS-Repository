@@ -53,10 +53,7 @@ Km_6 = np.array([0.33469220653113113, 0.3241086732596328, 0.2707381246634805, 0.
 tau_m_6 = np.array([0.27077729474540346, 0.25328285051602833, 0.23879146892254183, 0.20519983764789523, 0.22305139899884807, 0.2677241861741709])
 
 def ttest_to_row(group, metric, a_name, a, b_name, b, equal_var=False):
-    """
-    Runs an independent two-sample t-test and returns a dict suitable for a CSV row.
-    - equal_var=False uses Welch's t-test (usually safer when variances may differ).
-    """
+  
     res = stats.ttest_ind(a, b, equal_var=equal_var, nan_policy="omit")
     return {
         "group": group,
@@ -72,8 +69,7 @@ def ttest_to_row(group, metric, a_name, a, b_name, b, equal_var=False):
     }
 
 rows = []
-
-# === VELOCITY CONDITIONS (c2 vs c5) ===
+#velocity
 print("=== VELOCITY t‑test (c2 vs c5) ===")
 pairs_velocity = [
     ("Kp", Kp_2, Kp_5),
@@ -88,7 +84,7 @@ for metric, a, b in pairs_velocity:
     rows.append(r)
     print(f"{metric} Velocity: t = {r['t_stat']}, p = {r['p_value']}")
 
-# === ACCELERATION CONDITIONS (c3 vs c6) ===
+#acceleration
 print("\n=== ACCELERATION t‑test (c3 vs c6) ===")
 pairs_accel = [
     ("Kp", Kp_3, Kp_6),
@@ -103,7 +99,7 @@ for metric, a, b in pairs_accel:
     rows.append(r)
     print(f"{metric} Acceleration: t = {r['t_stat']}, p = {r['p_value']}")
 
-# === POSITION REFERENCE (c1 vs c4) ===
+#position
 print("\n=== POSITION t‑test (c1 vs c4) ===")
 pairs_position = [
     ("Kp", Kp_1, Kp_4),
@@ -118,7 +114,7 @@ for metric, a, b in pairs_position:
     rows.append(r)
     print(f"{metric} Position: t = {r['t_stat']}, p = {r['p_value']}")
 
-# --- Export to CSV ---
+#save results
 df = pd.DataFrame(rows)
 out_path = "t_test_results_parametric.csv"
 df.to_csv(out_path, index=False)

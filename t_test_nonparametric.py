@@ -2,9 +2,6 @@ import numpy as np
 import scipy.stats as stats
 import pandas as pd
 
-# ----------------------------
-# Arrays (from your CSV)
-# ----------------------------
 condition_name = {
     1: "Fixed-base Position",
     2: "Fixed-base Velocity",
@@ -50,18 +47,16 @@ tgt_phase_margin = {
     6: np.array([33.66193972285984, 51.56669372114206, 35.67173269194737, 52.40012863987752, 43.95012446737451, 52.66675922890093]),
 }
 
-# ----------------------------
-# T-test utilities
-# ----------------------------
+#welch test definition
 def welch_ttest(a, b):
-    """Welch's t-test with NaN omission."""
+    #ommits nan values
     return stats.ttest_ind(a, b, equal_var=False, nan_policy="omit")
 
 def ttest_row(metric_block, metric_name, cond_a, cond_b, a, b):
     res = welch_ttest(a, b)
     return {
-        "metric_block": metric_block,     # disturbance / target
-        "metric": metric_name,            # gain_crossover / phase_margin
+        "metric_block": metric_block,    
+        "metric": metric_name,            
         "cond_a": cond_a,
         "cond_b": cond_b,
         "cond_a_name": condition_name[cond_a],
