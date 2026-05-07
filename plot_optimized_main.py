@@ -1,38 +1,10 @@
 import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend — faster file saving, no GUI overhead
+matplotlib.use("Agg")  # Non-interactive backend, faster file saving, no GUI overhead
 import matplotlib.pyplot as plt
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-
-'''
-TIME HISTORIES
-• the error signal                  e [deg]   8192x5
-• the control signal                u [deg]   8192x5
-• the controlled yaw angle          x [deg]   8192x5
-• the target signal                 ft [deg]   8192x1
-• the disturbance signal            fd [deg]  8192x1
-• the time vector                   t [s]   8192x1
-
-MEASURED PILOT FREQUENCY RESPONSES
-• the Hpe (visual) frequency response Hpe_FC [complex numbers] 20x1
-• the Hpxd (motion) frequency response  Hpxd_FC [complex numbers] 20x1
-• the frequency vector   w_FC [rad/s]   20x1
-'''
-
-'''
-• C1 = Gain (P), no motion
-• C2 = Single integrator (V), no motion
-• C3 = Double integrator (A), no motion
-• C4 = Gain (P), motion
-• C5 = Single integrator (V), motion
-• C6 = Double integrator (A), motion
-'''
-
-
-# =============================================================================
-# Plot style
-# =============================================================================
+#plot style
 plt.rcParams.update({
     "font.family": "serif",
     "mathtext.fontset": "stix",
@@ -48,18 +20,13 @@ plt.rcParams.update({
     "axes.facecolor": "white",
 })
 
+#plot resolution
 FIG_DPI = 220
 
-
-# =============================================================================
-# Bode helpers
-# =============================================================================
-def bode_mag_phase(H):
-    """Return absolute magnitude and unwrapped phase in degrees."""
+def bode_mag_phase(H): 
     mag = np.abs(H)
     phase_deg = np.unwrap(np.angle(H)) * 180.0 / np.pi
     return mag, phase_deg
-
 
 def setup_bode_axis(ax, ylabel: str, phase_plot: bool = False):
     ax.set_xscale("log")
@@ -79,11 +46,7 @@ def setup_bode_axis(ax, ylabel: str, phase_plot: bool = False):
         ax.set_yscale("log")
 
 
-# =============================================================================
-# Worker function
-# =============================================================================
 def run_one(i, j):
-    """Run a single subject/condition fit. Executed in a worker process."""
     from Datasetcode import dataset
     import Optimizedpilotfitting_main as opf
 
@@ -99,10 +62,7 @@ def run_one(i, j):
 
     return i, j, motion, w_FC, vis_data, vest_data, visual_fit, vestib_fit, best_cost, params
 
-
-# =============================================================================
-# Plotting functions
-# =============================================================================
+#plotting
 def save_visual_bode(i, j, w_FC, vis_data, visual_fit):
     vis_mag, vis_ang = bode_mag_phase(vis_data)
     fit_mag, fit_ang = bode_mag_phase(visual_fit)
@@ -178,10 +138,6 @@ def save_vestibular_bode(i, j, w_FC, vest_data, vestib_fit):
     fig.savefig(f"FIGURES/subject_{i}_condition_{j}_vestibular.png", dpi=FIG_DPI, bbox_inches="tight")
     plt.close(fig)
 
-
-# =============================================================================
-# Main
-# =============================================================================
 if __name__ == "__main__":
     costs = []
     parameters_C1 = np.zeros((6, 11))
@@ -211,7 +167,7 @@ if __name__ == "__main__":
                 params.append(0.0)
             global_parameters[j - 1][i - 1] = params
 
-            # Save figures in the main process (Agg backend is safe here)
+            # Save figures in the main process 
             save_visual_bode(i, j, w_FC, vis_data, visual_fit)
             if motion:
                 save_vestibular_bode(i, j, w_FC, vest_data, vestib_fit)

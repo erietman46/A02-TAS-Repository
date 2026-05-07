@@ -1,6 +1,4 @@
-import os
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -13,10 +11,6 @@ import control as ct
 
 from Datasetcode import dataset
 
-
-# =============================================================================
-# Settings
-# =============================================================================
 OUTPUT_DIR = Path("open_loop_results")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -28,13 +22,9 @@ POLY_DEGREE = 4
 RIDGE_ALPHA = 1e-3
 SMOOTH_POINTS = 500
 
-USE_MEASURED_FC_DATA = True   # uses w_FC, Hpe_FC, Hpxd_FC when available
-Kc = 1.0
+USE_MEASURED_FC_DATA = True 
 
-
-# =============================================================================
-# Plot style
-# =============================================================================
+#plot style
 plt.rcParams.update({
     "font.family": "serif",
     "mathtext.fontset": "stix",
@@ -50,10 +40,6 @@ plt.rcParams.update({
     "axes.facecolor": "white",
 })
 
-
-# =============================================================================
-# Labels / naming
-# =============================================================================
 def condition_name(condition: int) -> str:
     names = {
         1: "Fixed-base Position",
@@ -65,35 +51,16 @@ def condition_name(condition: int) -> str:
     }
     return names.get(condition, f"Condition {condition}")
 
-
 def short_condition_label(condition: int) -> str:
     return f"C{condition}"
-
 
 def is_motion_condition(condition: int) -> bool:
     return condition in [4, 5, 6]
 
-
 def is_valid_condition(condition: int) -> bool:
     return condition in [1, 2, 3, 4, 5, 6]
 
-
-# =============================================================================
-# Controlled element
-# =============================================================================
 def controlled_element_frf(w: np.ndarray, condition: int, kc: float = 1.0) -> np.ndarray:
-    """
-    Controlled element dynamics (realistic vehicle dynamics):
-
-        condition 1,4 -> position
-            Hc = Kc * 1000 / (s + 10)^3
-
-        condition 2,5 -> velocity
-            Hc = Kc * 3600 / (s * (s + 30)^2)
-
-        condition 3,6 -> acceleration
-            Hc = Kc * 15 / s^2
-    """
     s = 1j * w
 
     if condition in [1, 4]:
@@ -107,21 +74,7 @@ def controlled_element_frf(w: np.ndarray, condition: int, kc: float = 1.0) -> np
 
     raise ValueError("Condition must be one of [1, 2, 3, 4, 5, 6].")
 
-
-# =============================================================================
-# Dataset access
-# =============================================================================
 def get_measured_frequency_data(subject: int, condition: int):
-    """
-    Read measured pilot frequency-response data from Datasetcode.py.
-
-    Expected keys from the dataset file:
-        w_FC      : frequency vector
-        Hpe_FC    : measured visual pilot FRF
-        Hpxd_FC   : measured motion/vestibular pilot FRF (motion-base only)
-
-    Falls back to w, Hpe, Hpxd if FC versions are not present.
-    """
     rec = dataset[subject][condition]
 
     if USE_MEASURED_FC_DATA:
@@ -137,28 +90,7 @@ def get_measured_frequency_data(subject: int, condition: int):
 
     return w, hpe, hpxd
 
-
-# =============================================================================
-# Open-loop transfer functions
-# =============================================================================
 def compute_open_loop_transfer_functions(subject: int, condition: int, kc: float = 1.0):
-    """
-    Build disturbance and target open-loop transfer functions from measured data.
-
-    Fixed-base:
-        L_d = L_t = Hc * Hpe
-
-    Motion-base:
-        L_d = Hc * (Hpe + s * Hpxd)
-        L_t = (Hpe * Hc) / (1 + s * Hpxd * Hc)
-
-    Notes:
-    - This follows the equations you wrote in your own code/comments.
-    - It assumes measured Hpxd_FC corresponds to Hpxd, so the extra factor s is applied here.
-    """
-    if not is_valid_condition(condition):
-        raise ValueError(f"Invalid condition: {condition}")
-
     w, hpe, hpxd = get_measured_frequency_data(subject, condition)
     h_c = controlled_element_frf(w, condition, kc=kc)
     s = 1j * w
@@ -175,20 +107,10 @@ def compute_open_loop_transfer_functions(subject: int, condition: int, kc: float
 
     return w, l_d, l_t
 
-
-# =============================================================================
-# Bode helpers
-# =============================================================================
 def magnitude_and_phase(H: np.ndarray):
-    """
-    Returns:
-        magnitude (absolute, not dB)
-        phase in degrees, unwrapped
-    """
     mag = np.abs(H)
     phase_deg = np.unwrap(np.angle(H)) * 180.0 / np.pi
     return mag, phase_deg
-
 
 def smooth_curve_with_polynomial_regression(
     w: np.ndarray,
@@ -197,9 +119,6 @@ def smooth_curve_with_polynomial_regression(
     alpha: float = RIDGE_ALPHA,
     n_points: int = SMOOTH_POINTS,
 ):
-    """
-    Smooth a bode curve by fitting y(log10(w)) with polynomial regression.
-    """
     x = np.log10(np.asarray(w).ravel())[:, None]
     y = np.asarray(y).ravel()
 
@@ -215,19 +134,7 @@ def smooth_curve_with_polynomial_regression(
 
     return w_dense, y_dense
 
-
-# =============================================================================
-# Margin extraction with control
-# =============================================================================
 def find_unity_gain_crossings(w: np.ndarray, mag: np.ndarray):
-    """
-    Find all |L| = 1 crossings using linear interpolation in log-frequency.
-
-    Returns
-    -------
-    crossings : list of float
-        Crossover frequencies in rad/s
-    """
     w = np.asarray(w).ravel().astype(float)
     mag = np.asarray(mag).ravel().astype(float)
 
@@ -263,11 +170,7 @@ def find_unity_gain_crossings(w: np.ndarray, mag: np.ndarray):
 
     return cleaned
 
-
 def interpolate_phase_at_frequency(w: np.ndarray, phase_deg: np.ndarray, wc: float):
-    """
-    Interpolate unwrapped phase at crossover frequency in log-frequency space.
-    """
     w = np.asarray(w).ravel().astype(float)
     phase_deg = np.asarray(phase_deg).ravel().astype(float)
 
@@ -283,17 +186,8 @@ def interpolate_phase_at_frequency(w: np.ndarray, phase_deg: np.ndarray, wc: flo
 
     return np.interp(xc, x, phase_deg)
 
-
 def compute_margins(w: np.ndarray, L: np.ndarray, crossover="first"):
-    """
-    Compute gain crossover and phase margin directly from sampled FRF.
 
-    Parameters
-    ----------
-    crossover : str
-        "first" -> first unity-gain crossover
-        "last"  -> last unity-gain crossover
-    """
     mag, phase_deg = magnitude_and_phase(L)
 
     gain_crossings = find_unity_gain_crossings(w, mag)
@@ -319,10 +213,6 @@ def compute_margins(w: np.ndarray, L: np.ndarray, crossover="first"):
         "all_gain_crossovers_rad_s": gain_crossings,
     }
 
-
-# =============================================================================
-# Plot formatting
-# =============================================================================
 def setup_bode_axis(ax, ylabel: str, phase_plot: bool = False):
     ax.set_xscale("log")
     ax.minorticks_on()
@@ -339,7 +229,6 @@ def setup_bode_axis(ax, ylabel: str, phase_plot: bool = False):
     else:
         ax.axhline(1.0, color="0.4", linewidth=0.8)
         ax.set_yscale("log")
-
 
 def draw_margin_annotation(ax, margins: dict, mode: str):
     wc = margins["gain_crossover_rad_s"]
@@ -361,10 +250,6 @@ def draw_margin_annotation(ax, margins: dict, mode: str):
         text = rf"$\varphi_{{m,d}} = {pm:.1f}^\circ$" if mode == "disturbance" else rf"$\varphi_{{m,t}} = {pm:.1f}^\circ$"
         ax.text(0.33, 0.27, text, transform=ax.transAxes, fontsize=12)
 
-
-# =============================================================================
-# Plot one subject-condition
-# =============================================================================
 def plot_subject_condition(subject: int, condition: int, kc: float = 1.0, outdir: Path = OUTPUT_DIR):
     w, L_d, L_t = compute_open_loop_transfer_functions(subject, condition, kc=kc)
 
@@ -482,10 +367,6 @@ def plot_subject_condition(subject: int, condition: int, kc: float = 1.0, outdir
 
     return summary_row
 
-
-# =============================================================================
-# Boxplots across all conditions
-# =============================================================================
 def _group_values_by_condition(df: pd.DataFrame, value_col: str, conditions=(1, 2, 3, 4, 5, 6)):
     grouped = []
     for c in conditions:
@@ -493,7 +374,6 @@ def _group_values_by_condition(df: pd.DataFrame, value_col: str, conditions=(1, 
         vals = vals[np.isfinite(vals)]
         grouped.append(vals)
     return grouped
-
 
 def _style_boxplot(bp):
     for box in bp["boxes"]:
@@ -506,7 +386,6 @@ def _style_boxplot(bp):
         median.set(color="k", linewidth=1.2)
     for flier in bp["fliers"]:
         flier.set(marker="o", markerfacecolor="white", markeredgecolor="k", markersize=4, linestyle="none")
-
 
 def setup_boxplot_axis(ax, ylabel: str):
     ax.grid(True, axis="y", which="major", color="0.75")
@@ -549,9 +428,6 @@ def plot_boxplots_all_conditions(df: pd.DataFrame, outdir: Path = OUTPUT_DIR):
         else:
             plt.close(fig)
 
-# =============================================================================
-# Run all subjects / conditions
-# =============================================================================
 def run_all(subjects=None, conditions=None, kc: float = 1.0):
     rows = []
 
@@ -587,17 +463,8 @@ def run_all(subjects=None, conditions=None, kc: float = 1.0):
     return df
 
 
-# =============================================================================
-# Main
-# =============================================================================
+
 if __name__ == "__main__":
-    """
-    Before running:
-    1. In Datasetcode.py, set:
-           folder = r"path/to/your/mat/files"
-    2. Install python-control:
-           pip install control
-    """
 
     summary = run_all(kc=Kc)
 
