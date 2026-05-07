@@ -1,6 +1,5 @@
-import os
-from pathlib import Path
 
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -14,9 +13,6 @@ import control as ct
 from Datasetcode import dataset
 
 
-# =============================================================================
-# Settings
-# =============================================================================
 OUTPUT_DIR = Path("open_loop_results")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -32,9 +28,8 @@ USE_MEASURED_FC_DATA = True   # uses w_FC, Hpe_FC, Hpxd_FC when available
 Kc = 1.0
 
 
-# =============================================================================
+
 # Plot style
-# =============================================================================
 plt.rcParams.update({
     "font.family": "serif",
     "mathtext.fontset": "stix",
@@ -544,11 +539,3 @@ if __name__ == "__main__":
     print(OUTPUT_DIR / "open_loop_margins.xlsx")
     print("\nFirst rows of summary:")
     print(summary.head())
-
-
-
-
-
-
-
-

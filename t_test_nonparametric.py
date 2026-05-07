@@ -74,10 +74,6 @@ def ttest_row(metric_block, metric_name, cond_a, cond_b, a, b):
         "p_value": float(res.pvalue),
     }
 
-# Your original pairing pattern:
-#   Position:       c1 vs c4
-#   Velocity:       c2 vs c5
-#   Acceleration:   c3 vs c6
 pairs = [
     ("position", 1, 4),
     ("velocity", 2, 5),
