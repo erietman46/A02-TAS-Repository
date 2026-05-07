@@ -33,7 +33,7 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
             cell.fill = highlight
 
     ar = [[array[:, 0], array[:, 3]],[array[:, 1], array[:, 4]],[array[:, 2], array[:, 5]]]
-    generate_plots(ar, stat_res["p_val"].values, stat_res["effect_size"].values, ["-", "-", "-"], ["Position", "Velocity", "Acceleration"])
+    generate_plots(ar, stat_res["p_val"].values, stat_res["effect_size"].values, ["-", "-", "-"], ["Position ZC", "Velocity ZC", "Acceleration ZC"])
 
     # === Total Variation of u ===
     data2, stat_res2, array2 = total_variation()
