@@ -52,7 +52,7 @@ def error_pdf():
     results = pd.DataFrame(
         res,
         index=[f"C{i + 1}" for i in range(3)],
-        columns=["p_val", "effect_size"]
+        columns=["p_val", "effect_size", "effect_type"]
     )
     df2 = pd.DataFrame(
         clean_sigmas,
@@ -63,7 +63,7 @@ def error_pdf():
     results2 = pd.DataFrame(
         res2,
         index=[f"C{i + 1}" for i in range(3)],
-        columns=["p_val", "effect_size"]
+        columns=["p_val", "effect_size", "effect_type"]
     )
 
     return df, results, df2, results2, np.array(clean_mus), np.array(clean_sigmas)

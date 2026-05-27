@@ -138,7 +138,7 @@ def contributions():
     results1 = pd.DataFrame(
         res1,
         index=[f"C{i + 1}" for i in range(3)],
-        columns=["p_val", "effect_size"]
+        columns=["p_val", "effect_size", "effect_type"]
     )
     df2 = pd.DataFrame(
         metric_target,
@@ -149,7 +149,7 @@ def contributions():
     results2 = pd.DataFrame(
         res2,
         index=[f"C{i + 1}" for i in range(3)],
-        columns=["p_val", "effect_size"]
+        columns=["p_val", "effect_size", "effect_type"]
     )
     df3 = pd.DataFrame(
         metric_noise,
@@ -160,7 +160,7 @@ def contributions():
     results3 = pd.DataFrame(
         res3,
         index=[f"C{i + 1}" for i in range(3)],
-        columns=["p_val", "effect_size"]
+        columns=["p_val", "effect_size", "effect_type"]
     )
 
     return df1, results1, df2, results2, df3, results3, np.array(metric_disturbance), np.array(metric_target), np.array(metric_noise)
