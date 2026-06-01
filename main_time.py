@@ -32,8 +32,9 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
         if float(cell.value) < 0.05:
             cell.fill = highlight
 
-    ar = [[array[:, 0], array[:, 3]],[array[:, 1], array[:, 4]],[array[:, 2], array[:, 5]]]
-    generate_plots(ar, stat_res["p_val"].values, stat_res["effect_size"].values, ["-", "-", "-"], ["Position ZC", "Velocity ZC", "Acceleration ZC"])
+    ar = [array[:, 0], array[:, 1], array[:, 2],
+          array[:, 3], array[:, 4], array[:, 5]]
+    generate_plots(ar, r"$\mathrm{CPR}(u)\ [\mathrm{-}]$", "Zero_Crossings")
 
     # === Total Variation of u ===
     data2, stat_res2, array2 = total_variation()
@@ -48,9 +49,9 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
         if float(cell.value) < 0.05:
             cell.fill = highlight
 
-    ar2 = [[array2[:, 0], array2[:, 3]], [array2[:, 1], array2[:, 4]], [array2[:, 2], array2[:, 5]]]
-    generate_plots(ar2, stat_res2["p_val"].values, stat_res2["effect_size"].values, ["-", "-", "-"],
-                   ["Position TV", "Velocity TV", "Acceleration TV"])
+    ar2 = [array2[:, 0], array2[:, 1], array2[:, 2],
+          array2[:, 3], array2[:, 4], array2[:, 5]]
+    generate_plots(ar2, r"$\mathrm{TV}(u)\ [\mathrm{deg}]$", "Total_Variation")
 
     # === Mean and 1-sigma Interval of e ===
     data3, stat_res3, data4, stat_res4, array3, array4 = error_pdf()
@@ -65,9 +66,9 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
         if float(cell.value) < 0.05:
             cell.fill = highlight
 
-    ar4 = [[array4[:, 0], array4[:, 3]], [array4[:, 1], array4[:, 4]], [array4[:, 2], array4[:, 5]]]
-    generate_plots(ar4, stat_res4["p_val"].values, stat_res4["effect_size"].values, ["deg", "deg", "deg"],
-                   ["Position Interval", "Velocity Interval", "Acceleration Interval"])
+    ar4 = [array4[:, 0], array4[:, 1], array4[:, 2],
+          array4[:, 3], array4[:, 4], array4[:, 5]]
+    generate_plots(ar4, r"$\mathrm{1}\sigma\mathrm{\ interval\ width\ }(u)\ [\mathrm{deg}]$", "Interval")
 
     # === RMS of e ===
     data5, stat_res5, array5 = RMS_error()
@@ -82,9 +83,9 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
         if float(cell.value) < 0.05:
             cell.fill = highlight
 
-    ar5 = [[array5[:, 0], array5[:, 3]], [array5[:, 1], array5[:, 4]], [array5[:, 2], array5[:, 5]]]
-    generate_plots(ar5, stat_res5["p_val"].values, stat_res5["effect_size"].values, ["deg", "deg", "deg"],
-                   ["Position e", "Velocity e", "Acceleration e"])
+    ar5 = [array5[:, 0], array5[:, 1], array5[:, 2],
+          array5[:, 3], array5[:, 4], array5[:, 5]]
+    generate_plots(ar5, r"$\mathrm{RMS}(e)\ [\mathrm{deg}]$", "e")
 
     # === RMS of u ===
     data6, stat_res6, array6 = RMS_input()
@@ -99,9 +100,9 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
         if float(cell.value) < 0.05:
             cell.fill = highlight
 
-    ar6 = [[array6[:, 0], array6[:, 3]], [array6[:, 1], array6[:, 4]], [array6[:, 2], array6[:, 5]]]
-    generate_plots(ar6, stat_res6["p_val"].values, stat_res6["effect_size"].values, ["-", "-", "-"],
-                   ["Position u", "Velocity u", "Acceleration u"])
+    ar6 = [array6[:, 0], array6[:, 1], array6[:, 2],
+          array6[:, 3], array6[:, 4], array6[:, 5]]
+    generate_plots(ar6, r"$\mathrm{RMS}(u)\ [\mathrm{deg}]$", "u")
 
     # === RMS of DERe ===
     data7, stat_res7, array7 = RMS_DERe()
@@ -116,9 +117,9 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
         if float(cell.value) < 0.05:
             cell.fill = highlight
 
-    ar7 = [[array7[:, 0], array7[:, 3]], [array7[:, 1], array7[:, 4]], [array7[:, 2], array7[:, 5]]]
-    generate_plots(ar7, stat_res7["p_val"].values, stat_res7["effect_size"].values, ["deg/s", "deg/s", "deg/s"],
-                   ["Position e'", "Velocity e'", "Acceleration e'"])
+    ar7 = [array7[:, 0], array7[:, 1], array7[:, 2],
+          array7[:, 3], array7[:, 4], array7[:, 5]]
+    generate_plots(ar7, r"$\mathrm{RMS}(\dot{e})\ [\mathrm{deg/s}]$", "e'")
 
     # === RMS of DERu ===
     data8, stat_res8, array8 = RMS_DERu()
@@ -133,21 +134,21 @@ with pd.ExcelWriter("results.xlsx", engine="openpyxl") as writer:
         if float(cell.value) < 0.05:
             cell.fill = highlight
 
-    ar8 = [[array8[:, 0], array8[:, 3]], [array8[:, 1], array8[:, 4]], [array8[:, 2], array8[:, 5]]]
-    generate_plots(ar8, stat_res8["p_val"].values, stat_res8["effect_size"].values, ["/s", "/s", "/s"],
-                   ["Position u'", "Velocity u'", "Acceleration u'"])
+    ar8 = [array8[:, 0], array8[:, 1], array8[:, 2],
+          array8[:, 3], array8[:, 4], array8[:, 5]]
+    generate_plots(ar8, r"$\mathrm{RMS}(\dot{u})\ [\mathrm{deg/s}]$", "u'")
 
     # === Contributions to u ===
     data9, stat_res9, data10, stat_res10, data11, stat_res11, array9, array10, array11 = contributions()
-    ar9 = [[array9[:, 0], array9[:, 3]], [array9[:, 1], array9[:, 4]], [array9[:, 2], array9[:, 5]]]
-    generate_plots(ar9, stat_res9["p_val"].values, stat_res9["effect_size"].values, ["pct", "pct", "pct"],
-                   ["Position cont d", "Velocity cont d", "Acceleration cont d"])
-    ar10 = [[array10[:, 0], array10[:, 3]], [array10[:, 1], array10[:, 4]], [array10[:, 2], array10[:, 5]]]
-    generate_plots(ar10, stat_res10["p_val"].values, stat_res10["effect_size"].values, ["pct", "pct", "pct"],
-                   ["Position cont t", "Velocity cont t", "Acceleration cont t"])
-    ar11 = [[array11[:, 0], array11[:, 3]], [array11[:, 1], array11[:, 4]], [array11[:, 2], array11[:, 5]]]
-    generate_plots(ar11, stat_res11["p_val"].values, stat_res11["effect_size"].values, ["pct", "pct", "pct"],
-                   ["Position cont n", "Velocity cont n", "Acceleration cont n"])
+    ar9 = [array9[:, 0], array9[:, 1], array9[:, 2],
+          array9[:, 3], array9[:, 4], array9[:, 5]]
+    generate_plots(ar9, r"$\mathrm{Contribution\ }f_d\mathrm{\ to\ }u\ [\mathrm{\%}]$", "Cont_d")
+    ar10 = [array10[:, 0], array10[:, 1], array10[:, 2],
+           array10[:, 3], array10[:, 4], array10[:, 5]]
+    generate_plots(ar10, r"$\mathrm{Contribution\ }f_t\mathrm{\ to\ }u\ [\mathrm{\%}]$", "Cont_t")
+    ar11 = [array11[:, 0], array11[:, 1], array11[:, 2],
+            array11[:, 3], array11[:, 4], array11[:, 5]]
+    generate_plots(ar11, r"$\mathrm{Contribution\ }n\mathrm{\ to\ }u\ [\mathrm{\%}]$", "Cont_n")
 
     # --- WRITE DATA SHEET ---
     start_row = 0

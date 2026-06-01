@@ -300,64 +300,117 @@ def generate_individual_plots(data_dict, numbers, p_values, effect_sizes, units_
 # generate_individual_plots(pos_data, numbers2, p_vals2, e_sizes2, my_units2)
 
 
-def generate_plots(data_list, p_vals, e_sizes, units_list, names_list):
+# def generate_plots(data_list, p_vals, e_sizes, units_list, names_list):
+#     """
+#     Inputs are now lists. Index 0 = RMS Error, Index 1 = RMS Deriv, Index 2 = 1-Sigma.
+#     """
+#     for i in range(len(data_list)):
+#         fig, ax = plt.subplots(figsize=(5, 5))
+#
+#         # Access list items by index
+#         no_mo, mo = data_list[i]
+#         p_val = p_vals[i]
+#         es = e_sizes[i]
+#         unit = units_list[i]
+#         name = names_list[i]
+#
+#         # Automatic labeling: 0 -> (a), 1 -> (b), 2 -> (c)
+#         #sublabel = f"({chr(97 + i)})"
+#
+#         plot_data = [no_mo, mo]
+#         labels = ['Fixed-Base', 'Motion-Base']
+#
+#         # 1. Draw the Boxplot
+#         sns.boxplot(ax=ax, data=plot_data, color="white", width=0.5,
+#                     showfliers=False, zorder=2,
+#                     boxprops=dict(linewidth=0.8),
+#                     whiskerprops=dict(linewidth=0.8),
+#                     capprops=dict(linewidth=0.8),
+#                     medianprops=dict(color="black", linewidth=1.2))
+#
+#         # 2. Add Strip Plot
+#         sns.stripplot(ax=ax, data=plot_data, color="black", size=5, jitter=False, alpha=0.8, zorder=3)
+#
+#         # 3. Connecting lines
+#         for j in range(len(no_mo)):
+#             ax.plot([0, 1], [no_mo[j], mo[j]], color='0.7', linestyle='--', linewidth=0.8, alpha=0.5, zorder=1)
+#
+#         # 4. Setup Grid (Horizontal Only)
+#         ax.minorticks_on()
+#         ax.grid(True, axis='y', which="major", color="0.80", linestyle='-')
+#         ax.grid(True, axis='y', which="minor", color="0.85", linestyle=(0, (1.2, 4.5)))
+#         ax.grid(False, axis='x')
+#         ax.set_box_aspect(1)
+#
+#         # 5. Stats Annotation
+#         stats_text = f"p = {p_val:.4f}\nd = {es:.2f}"
+#         y_max = max(max(no_mo), max(mo))
+#         y_range = y_max - min(min(no_mo), min(mo))
+#         ax.text(0.5, y_max + (y_range * 0.08), stats_text, ha='center', va='bottom', fontsize=10)
+#
+#         # 6. Formatting
+#         ax.set_xticks([0, 1])
+#         ax.set_xticklabels(labels)
+#         ax.set_ylabel(rf"$\mathrm{{[{unit}]}}$", fontsize=13)
+#
+#         # Use the sublabel (a, b, c) as the title below the plot
+#         #ax.set_title(sublabel, y=-0.25, fontweight="bold", fontsize=14)
+#
+#         # 7. Save and Show
+#         filename = f"{name.replace(' ', '_')}_results.png"
+#         plt.tight_layout()
+#         plt.savefig(filename, dpi=FIG_DPI, bbox_inches="tight")
+#         plt.show()
+
+def generate_plots(data_list, units_list, names_list):
     """
-    Inputs are now lists. Index 0 = RMS Error, Index 1 = RMS Deriv, Index 2 = 1-Sigma.
+    data_list: list of 6 arrays, one per condition [C1, C2, C3, C4, C5, C6]
     """
-    for i in range(len(data_list)):
-        fig, ax = plt.subplots(figsize=(5, 5))
+    fig, ax = plt.subplots(figsize=(5, 5))
 
-        # Access list items by index
-        no_mo, mo = data_list[i]
-        p_val = p_vals[i]
-        es = e_sizes[i]
-        unit = units_list[i]
-        name = names_list[i]
+    unit = units_list
+    name = names_list
 
-        # Automatic labeling: 0 -> (a), 1 -> (b), 2 -> (c)
-        #sublabel = f"({chr(97 + i)})"
+    # Reorder to C1 C4 C2 C5 C3 C6
+    reordered = [data_list[0], data_list[3],
+                 data_list[1], data_list[4],
+                 data_list[2], data_list[5]]
+    labels = ['C1', 'C4', 'C2', 'C5', 'C3', 'C6']
 
-        plot_data = [no_mo, mo]
-        labels = ['Fixed-Base', 'Motion-Base']
+    # 1. Draw the Boxplot
+    sns.boxplot(ax=ax, data=reordered, color="white", width=0.5,
+                showfliers=False, zorder=2,
+                boxprops=dict(linewidth=0.8),
+                whiskerprops=dict(linewidth=0.8),
+                capprops=dict(linewidth=0.8),
+                medianprops=dict(color="black", linewidth=1.2))
 
-        # 1. Draw the Boxplot
-        sns.boxplot(ax=ax, data=plot_data, color="white", width=0.5,
-                    showfliers=False, zorder=2,
-                    boxprops=dict(linewidth=0.8),
-                    whiskerprops=dict(linewidth=0.8),
-                    capprops=dict(linewidth=0.8),
-                    medianprops=dict(color="black", linewidth=1.2))
+    # 2. Add Strip Plot
+    sns.stripplot(ax=ax, data=reordered, color="black", size=5, jitter=False, alpha=0.8, zorder=3)
 
-        # 2. Add Strip Plot
-        sns.stripplot(ax=ax, data=plot_data, color="black", size=5, jitter=False, alpha=0.8, zorder=3)
-
-        # 3. Connecting lines
+    # 3. Connecting lines (C1↔C4, C2↔C5, C3↔C6)
+    for pair_idx in range(3):
+        no_mo = reordered[pair_idx * 2]  # C1, C2, C3 at positions 0, 2, 4
+        mo = reordered[pair_idx * 2 + 1]  # C4, C5, C6 at positions 1, 3, 5
         for j in range(len(no_mo)):
-            ax.plot([0, 1], [no_mo[j], mo[j]], color='0.7', linestyle='--', linewidth=0.8, alpha=0.5, zorder=1)
+            ax.plot([pair_idx * 2, pair_idx * 2 + 1], [no_mo[j], mo[j]],
+                    color='0.7', linestyle='--', linewidth=0.8, alpha=0.5, zorder=1)
 
-        # 4. Setup Grid (Horizontal Only)
-        ax.minorticks_on()
-        ax.grid(True, axis='y', which="major", color="0.80", linestyle='-')
-        ax.grid(True, axis='y', which="minor", color="0.85", linestyle=(0, (1.2, 4.5)))
-        ax.grid(False, axis='x')
-        ax.set_box_aspect(1)
+    # 4. Setup Grid (Horizontal Only)
+    ax.minorticks_on()
+    ax.grid(True, axis='y', which="major", color="0.80", linestyle='-')
+    ax.grid(True, axis='y', which="minor", color="0.85", linestyle=(0, (1.2, 4.5)))
+    ax.grid(False, axis='x')
+    ax.set_box_aspect(1)
 
-        # 5. Stats Annotation
-        stats_text = f"p = {p_val:.4f}\nd = {es:.2f}"
-        y_max = max(max(no_mo), max(mo))
-        y_range = y_max - min(min(no_mo), min(mo))
-        ax.text(0.5, y_max + (y_range * 0.08), stats_text, ha='center', va='bottom', fontsize=10)
+    # 5. Formatting
+    ax.set_xticks(range(6))
+    ax.set_xticklabels(labels)
+    ax.set_xlabel("Condition")
+    ax.set_ylabel(unit, fontsize=13)
 
-        # 6. Formatting
-        ax.set_xticks([0, 1])
-        ax.set_xticklabels(labels)
-        ax.set_ylabel(rf"$\mathrm{{[{unit}]}}$", fontsize=13)
-
-        # Use the sublabel (a, b, c) as the title below the plot
-        #ax.set_title(sublabel, y=-0.25, fontweight="bold", fontsize=14)
-
-        # 7. Save and Show
-        filename = f"{name.replace(' ', '_')}_results.png"
-        plt.tight_layout()
-        plt.savefig(filename, dpi=FIG_DPI, bbox_inches="tight")
-        plt.show()
+    # 6. Save and Show
+    filename = f"{name.replace(' ', '_')}_results.png"
+    plt.tight_layout()
+    plt.savefig(filename, dpi=FIG_DPI, bbox_inches="tight")
+    plt.show()
