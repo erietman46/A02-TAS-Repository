@@ -362,6 +362,9 @@ def generate_individual_plots(data_dict, numbers, p_values, effect_sizes, units_
 #         plt.savefig(filename, dpi=FIG_DPI, bbox_inches="tight")
 #         plt.show()
 
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 def generate_plots(data_list, units_list, names_list):
     """
     data_list: list of 6 arrays, one per condition [C1, C2, C3, C4, C5, C6]
@@ -377,24 +380,19 @@ def generate_plots(data_list, units_list, names_list):
                  data_list[2], data_list[5]]
     labels = ['C1', 'C4', 'C2', 'C5', 'C3', 'C6']
 
-    # 1. Draw the Boxplot
+    # 1. Draw the Boxplot with hollow outliers
+    # We set showfliers=True and use flierprops to format them as hollow circles
     sns.boxplot(ax=ax, data=reordered, color="white", width=0.5,
-                showfliers=False, zorder=2,
+                showfliers=True, zorder=2,
                 boxprops=dict(linewidth=0.8),
                 whiskerprops=dict(linewidth=0.8),
                 capprops=dict(linewidth=0.8),
-                medianprops=dict(color="black", linewidth=1.2))
+                medianprops=dict(color="black", linewidth=1.2),
+                flierprops=dict(marker='o', markerfacecolor='none',
+                                markeredgecolor='black', markersize=5,
+                                markeredgewidth=0.8))
 
-    # 2. Add Strip Plot
-    sns.stripplot(ax=ax, data=reordered, color="black", size=5, jitter=False, alpha=0.8, zorder=3)
-
-    # 3. Connecting lines (C1↔C4, C2↔C5, C3↔C6)
-    for pair_idx in range(3):
-        no_mo = reordered[pair_idx * 2]  # C1, C2, C3 at positions 0, 2, 4
-        mo = reordered[pair_idx * 2 + 1]  # C4, C5, C6 at positions 1, 3, 5
-        for j in range(len(no_mo)):
-            ax.plot([pair_idx * 2, pair_idx * 2 + 1], [no_mo[j], mo[j]],
-                    color='0.7', linestyle='--', linewidth=0.8, alpha=0.5, zorder=1)
+    # [Note: Section 2 (Strip Plot) and Section 3 (Connecting Lines) have been removed]
 
     # 4. Setup Grid (Horizontal Only)
     ax.minorticks_on()
